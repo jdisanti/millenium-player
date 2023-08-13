@@ -13,12 +13,15 @@
 // If not, see <https://www.gnu.org/licenses/>.
 
 use clap::Parser;
-use rodio::Source;
-use std::{
-    fs::File,
-    io::{BufReader, Cursor, Read},
-    time::Duration,
-};
+
+mod play_audio;
+use play_audio::prototype_play_audio;
+
+mod drag_and_drop;
+use drag_and_drop::prototype_eframe_drag_and_drop;
+
+mod waveform;
+use waveform::prototype_waveform;
 
 #[derive(Debug, clap::Subcommand)]
 enum Prototype {
@@ -26,76 +29,15 @@ enum Prototype {
     PlayAudio,
     /// Eframe drag and drop
     EframeDragAndDrop,
+    /// Waveform display
+    Waveform,
 }
 
-#[derive(Debug, clap::Parser)]
+#[derive(Debug, Parser)]
 #[command()]
 struct Args {
     #[command(subcommand)]
     prototype: Prototype,
-}
-
-fn prototype_play_audio() {
-    println!("loading hydrate.mp3 into memory");
-    let mut file = BufReader::new(File::open("../test-data/hydrate/hydrate.mp3").unwrap());
-    let mut contents = Vec::new();
-    file.read_to_end(&mut contents).unwrap();
-
-    println!("opening audio output device");
-    let (_stream, stream_handle) = rodio::OutputStream::try_default().unwrap();
-    let sink = rodio::Sink::try_new(&stream_handle).unwrap();
-
-    println!("playing first 5 seconds of hydrate.mp3");
-    sink.append(
-        rodio::Decoder::new(Cursor::new(contents.clone()))
-            .unwrap()
-            .take_duration(Duration::from_secs(5)),
-    );
-    sink.sleep_until_end();
-
-    println!("skipping 60 seconds into hydrate.mp3");
-    sink.append(
-        rodio::Decoder::new(Cursor::new(contents.clone()))
-            .unwrap()
-            .skip_duration(Duration::from_secs(60)),
-    );
-    sink.sleep_until_end();
-}
-
-fn prototype_eframe_drag_and_drop() {
-    struct App;
-    impl App {
-        fn new(_creation_context: &eframe::CreationContext<'_>) -> Self {
-            Self
-        }
-    }
-    impl eframe::App for App {
-        fn update(&mut self, ctx: &eframe::egui::Context, frame: &mut eframe::Frame) {
-            egui::CentralPanel::default().show(ctx, |ui| {
-                ui.vertical_centered(|ui| {
-                    ui.add(egui::Label::new("Drag and drop a file here"));
-                });
-
-                ctx.input(|input| {
-                    if !input.raw.dropped_files.is_empty() {
-                        println!("dropped files: {:?}", input.raw.dropped_files);
-                    }
-                })
-            });
-        }
-    }
-    let native_options = eframe::NativeOptions {
-        app_id: Some("millenium-player-prototype".into()),
-        drag_and_drop_support: true,
-        resizable: true,
-        ..Default::default()
-    };
-    eframe::run_native(
-        "Millenium Player Prototype",
-        native_options,
-        Box::new(|cc| Box::new(App::new(cc))),
-    )
-    .unwrap();
 }
 
 fn main() {
@@ -104,5 +46,6 @@ fn main() {
     match args.prototype {
         Prototype::PlayAudio => prototype_play_audio(),
         Prototype::EframeDragAndDrop => prototype_eframe_drag_and_drop(),
+        Prototype::Waveform => prototype_waveform(),
     }
 }
