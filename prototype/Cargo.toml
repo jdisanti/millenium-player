@@ -23,6 +23,7 @@ clap = { version = "4.3.21", features = ["derive"] }
 eframe = "0.22.0"
 egui = "0.22.0"
 rodio = { version = "0.17.1", default-features = false, features = ["symphonia-all"] }
+rustfft = "6.1.0"
 
 [profile.release]
 codegen-units = 1
