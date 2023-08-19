@@ -1,0 +1,30 @@
+name: CI
+
+on:
+  push:
+    branches: [ "main" ]
+  pull_request:
+
+env:
+  CARGO_TERM_COLOR: always
+  RUSTFLAGS: -Dwarnings
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v3
+    - name: Install Rust
+      uses: dtolnay/rust-toolchain@master
+      with:
+        toolchain: 1.71.1
+        components: clippy, rustfmt
+    - name: Install dependencies
+      run: sudo apt-get install -y libasound2-dev
+    - name: Code Style
+      run: cargo fmt --check
+    - name: Tests
+      run: cargo test --all-features
+    - name: Clippy
+      run: cargo clippy --all-features
