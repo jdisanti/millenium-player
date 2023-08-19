@@ -29,6 +29,7 @@ use std::{
 // See: https://en.wikipedia.org/wiki/Window_function
 #[derive(Copy, Clone)]
 enum WindowFunction {
+    #[allow(unused)]
     None,
     Hamming,
 }
