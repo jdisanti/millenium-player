@@ -1,5 +1,13 @@
 [workspace]
 members = [
-    "prototype"
+    "millenium-desktop",
+    "millenium-core",
+    "prototype",
 ]
 
+[profile.release]
+codegen-units = 1
+debug = true
+incremental = false
+lto = true
+opt-level = "s"

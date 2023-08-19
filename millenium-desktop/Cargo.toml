@@ -13,15 +13,21 @@
 # If not, see <https://www.gnu.org/licenses/>.
 
 [package]
-name = "millenium-player-prototype"
+name = "millenium-desktop"
 version = "0.1.0"
 edition = "2021"
 license = "GPL-3.0"
 publish = false
 
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
 [dependencies]
-clap = { version = "4.3.21", features = ["derive"] }
+camino = "1.1.6"
+clap = { version = "4.3.21", default-features = false, features = ["std", "help", "usage"] }
 eframe = "0.22.0"
-egui = "0.22.0"
-rodio = { version = "0.17.1", default-features = false, features = ["symphonia-all"] }
-rustfft = "6.1.0"
+egui = { version = "0.22.0", features = ["extra_debug_asserts", "log"] }
+millenium-core = { path = "../millenium-core" }
+url = "2.4.0"
+
+[dev-dependencies]
+pretty_assertions = "1.4.0"
