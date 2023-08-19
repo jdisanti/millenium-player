@@ -12,8 +12,8 @@
 // You should have received a copy of the GNU General Public License along with Millenium Player.
 // If not, see <https://www.gnu.org/licenses/>.
 
-use clap::error::ErrorKind;
 use clap::ArgAction;
+use clap::{error::ErrorKind, ArgMatches};
 use millenium_core::location::{Location, ParseLocationError};
 use std::{ffi, str::FromStr};
 
@@ -29,28 +29,17 @@ pub enum Mode {
     },
 }
 
+fn invalid_location(err: ParseLocationError) -> clap::Error {
+    cli_config().error(ErrorKind::InvalidValue, err.to_string())
+}
+
 pub fn parse<Arg, Itr>(args: Itr) -> Result<Mode, clap::Error>
 where
     Arg: Into<ffi::OsString> + Clone,
     Itr: IntoIterator<Item = Arg>,
 {
-    fn invalid_location(err: ParseLocationError) -> clap::Error {
-        cli_config().error(ErrorKind::InvalidValue, err.to_string())
-    }
-
     let matches = cli_config().try_get_matches_from(args)?;
     match matches.subcommand() {
-        Some(("simple", sub)) => {
-            let locations: Result<Vec<Location>, ParseLocationError> = sub
-                .get_many::<String>("LOCATIONS")
-                .unwrap_or_default()
-                .map(|s| Location::from_str(s))
-                .collect();
-            match locations {
-                Ok(locations) => Ok(Mode::Simple { locations }),
-                Err(err) => Err(invalid_location(err)),
-            }
-        }
         Some(("library", sub)) => {
             let storage_path = sub
                 .get_one::<String>("storage-path")
@@ -65,9 +54,20 @@ where
                 audio_path,
             })
         }
-        _ => Ok(Mode::Simple {
-            locations: Vec::new(),
-        }),
+        Some(("simple", sub)) => parse_simple(sub),
+        _ => parse_simple(&matches),
+    }
+}
+
+fn parse_simple(matches: &ArgMatches) -> Result<Mode, clap::Error> {
+    let locations: Result<Vec<Location>, ParseLocationError> = matches
+        .get_many::<String>("LOCATIONS")
+        .unwrap_or_default()
+        .map(|s| Location::from_str(s))
+        .collect();
+    match locations {
+        Ok(locations) => Ok(Mode::Simple { locations }),
+        Err(err) => Err(invalid_location(err)),
     }
 }
 
@@ -75,6 +75,13 @@ fn cli_config() -> clap::Command {
     clap::Command::new("Millenium Player")
         .version(env!("CARGO_PKG_VERSION"))
         .about("Portable audio player and library manager")
+        .args_conflicts_with_subcommands(true)
+        .arg(
+            clap::Arg::new("LOCATIONS")
+                .help("List of files or URLs to play (audio files, playlist files, or both)")
+                .action(clap::ArgAction::Append)
+                .required(false),
+        )
         .subcommand(
             clap::Command::new("simple")
                 .about("Run in a simple audio player mode with no library management features")
@@ -125,6 +132,34 @@ mod cli_tests {
                 locations: Vec::new()
             },
             parse(&["ungabunga"]).expect("success"),
+        );
+    }
+
+    #[test]
+    fn file_paths_run_simple_mode() {
+        pretty_assertions::assert_eq!(
+            Mode::Simple {
+                locations: vec![Location::path("foo.mp3")],
+            },
+            parse(&["millenium-player", "foo.mp3"]).expect("success"),
+        );
+        pretty_assertions::assert_eq!(
+            Mode::Simple {
+                locations: vec![Location::from_str("https://example.com/test.mp3").unwrap()],
+            },
+            parse(&["millenium-player", "https://example.com/test.mp3"]).expect("success"),
+        );
+        pretty_assertions::assert_eq!(
+            Mode::Simple {
+                locations: vec![Location::path("foo.mp3")],
+            },
+            parse(&["millenium-player", "--", "foo.mp3"]).expect("success"),
+        );
+        pretty_assertions::assert_eq!(
+            Mode::Simple {
+                locations: vec![Location::path("simple")],
+            },
+            parse(&["millenium-player", "--", "simple"]).expect("success"),
         );
     }
 
