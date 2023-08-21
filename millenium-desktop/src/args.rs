@@ -125,13 +125,13 @@ mod cli_tests {
             Mode::Simple {
                 locations: Vec::new()
             },
-            parse(&["millenium-player"]).expect("success"),
+            parse(["millenium-player"]).expect("success"),
         );
         pretty_assertions::assert_eq!(
             Mode::Simple {
                 locations: Vec::new()
             },
-            parse(&["ungabunga"]).expect("success"),
+            parse(["ungabunga"]).expect("success"),
         );
     }
 
@@ -141,25 +141,25 @@ mod cli_tests {
             Mode::Simple {
                 locations: vec![Location::path("foo.mp3")],
             },
-            parse(&["millenium-player", "foo.mp3"]).expect("success"),
+            parse(["millenium-player", "foo.mp3"]).expect("success"),
         );
         pretty_assertions::assert_eq!(
             Mode::Simple {
                 locations: vec![Location::from_str("https://example.com/test.mp3").unwrap()],
             },
-            parse(&["millenium-player", "https://example.com/test.mp3"]).expect("success"),
+            parse(["millenium-player", "https://example.com/test.mp3"]).expect("success"),
         );
         pretty_assertions::assert_eq!(
             Mode::Simple {
                 locations: vec![Location::path("foo.mp3")],
             },
-            parse(&["millenium-player", "--", "foo.mp3"]).expect("success"),
+            parse(["millenium-player", "--", "foo.mp3"]).expect("success"),
         );
         pretty_assertions::assert_eq!(
             Mode::Simple {
                 locations: vec![Location::path("simple")],
             },
-            parse(&["millenium-player", "--", "simple"]).expect("success"),
+            parse(["millenium-player", "--", "simple"]).expect("success"),
         );
     }
 
@@ -169,16 +169,16 @@ mod cli_tests {
             Mode::Simple {
                 locations: Vec::new()
             },
-            parse(&["millenium-player", "simple"]).expect("success"),
+            parse(["millenium-player", "simple"]).expect("success"),
         );
         pretty_assertions::assert_eq!(
             Mode::Simple {
                 locations: Vec::new()
             },
-            parse(&["ungabunga", "simple"]).expect("success"),
+            parse(["ungabunga", "simple"]).expect("success"),
         );
 
-        let args = parse(&[
+        let args = parse([
             "millenium-player",
             "simple",
             "path/to/foo.ogg",
@@ -205,7 +205,7 @@ mod cli_tests {
                 storage_path: None,
                 audio_path: None,
             },
-            parse(&["millenium-player", "library"]).expect("success"),
+            parse(["millenium-player", "library"]).expect("success"),
         );
 
         pretty_assertions::assert_eq!(
@@ -213,8 +213,7 @@ mod cli_tests {
                 storage_path: Some(Location::from_str("some/path").unwrap()),
                 audio_path: None,
             },
-            parse(&["millenium-player", "library", "--storage-path", "some/path"])
-                .expect("success"),
+            parse(["millenium-player", "library", "--storage-path", "some/path"]).expect("success"),
         );
 
         pretty_assertions::assert_eq!(
@@ -222,7 +221,7 @@ mod cli_tests {
                 storage_path: Some(Location::from_str("some/path").unwrap()),
                 audio_path: Some(Location::from_str("some/audio/path").unwrap()),
             },
-            parse(&[
+            parse([
                 "millenium-player",
                 "library",
                 "--storage-path",
@@ -238,7 +237,7 @@ mod cli_tests {
                 storage_path: None,
                 audio_path: Some(Location::from_str("some/audio/path").unwrap()),
             },
-            parse(&[
+            parse([
                 "millenium-player",
                 "library",
                 "--audio-path",

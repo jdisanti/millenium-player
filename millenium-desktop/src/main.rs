@@ -12,15 +12,43 @@
 // You should have received a copy of the GNU General Public License along with Millenium Player.
 // If not, see <https://www.gnu.org/licenses/>.
 
-use std::{env, process};
+use std::env;
+use std::error::Error as StdError;
 
-// Command-line argument parsing.
+/// Command-line argument parsing.
 mod args;
 
+/// Simple audio player mode with no library management features
+mod simple_mode;
+
+fn do_main() -> Result<(), Box<dyn StdError>> {
+    let mode = args::parse(env::args_os())?;
+    let result = match mode {
+        args::Mode::Simple { locations } => simple_mode::SimpleMode::run(&locations),
+        args::Mode::Library {
+            storage_path,
+            audio_path,
+        } => {
+            let (_, _) = (storage_path, audio_path);
+            unimplemented!("library mode hasn't been implemented yet")
+        }
+    };
+    result?;
+    Ok(())
+}
+
 fn main() {
-    let _mode = args::parse(env::args_os()).unwrap_or_else(|err| {
-        eprintln!("{}", err);
-        process::exit(1);
+    // TODO: Also log to file
+    simplelog::CombinedLogger::init(vec![simplelog::TermLogger::new(
+        simplelog::LevelFilter::Info,
+        simplelog::Config::default(),
+        simplelog::TerminalMode::Stderr,
+        simplelog::ColorChoice::Auto,
+    )])
+    .expect("first and only logger init");
+
+    let _ = do_main().map_err(|err| {
+        log::error!("Fatal error: {err}");
+        std::process::exit(1)
     });
-    dbg!(_mode);
 }
