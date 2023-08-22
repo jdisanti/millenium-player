@@ -21,10 +21,18 @@ publish = false
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
+[features]
+default = []
+aac = ["symphonia/aac"]
+
 [dependencies]
+base64 = "0.21.2"
 camino = "1.1.6"
-rodio = { version = "0.17.1", default-features = false, features = ["symphonia-all"] }
+cpal = "0.15.2"
+log = "0.4.20"
 rustfft = "6.1.0"
+symphonia = { version = "0.5.3", features = ["adpcm", "flac", "mp1", "mp2", "mp3", "pcm", "vorbis"] }
+symphonia-core = "0.5.3"
 thiserror = "1.0.47"
 url = "2.4.0"
 

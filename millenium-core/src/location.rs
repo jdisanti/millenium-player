@@ -17,6 +17,26 @@ use std::{error::Error as StdError, str::FromStr};
 use thiserror::Error;
 use url::Url;
 
+#[derive(Copy, Clone, Debug)]
+#[cfg_attr(test, derive(Eq, PartialEq))]
+pub enum InferredLocationType {
+    Audio,
+    Playlist,
+    Unknown,
+}
+
+impl InferredLocationType {
+    /// True if the inferred type is a playlist.
+    pub fn is_playlist(&self) -> bool {
+        matches!(self, Self::Playlist { .. })
+    }
+
+    /// True if the inferred type is unknown.
+    pub fn is_unknown(&self) -> bool {
+        matches!(self, Self::Unknown)
+    }
+}
+
 /// Resource location that can either be a URL or file path.
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum Location {
@@ -48,6 +68,37 @@ impl Location {
         match self {
             Self::Url(_) => None,
             Self::Path(path) => Some(path),
+        }
+    }
+
+    /// Returns the file extension on this location, if there is one.
+    pub fn extension(&self) -> Option<&str> {
+        match self {
+            Self::Url(url) => Utf8Path::new(url.path()).extension(),
+            Self::Path(path) => path.extension(),
+        }
+    }
+
+    /// Infers the type of the location.
+    pub fn inferred_type(&self) -> InferredLocationType {
+        let lower_ext: Option<String> = match self {
+            Self::Url(url) => Utf8Path::new(&url.path())
+                .extension()
+                .map(str::to_ascii_lowercase),
+            Self::Path(path) => path.extension().map(|ext| ext.to_ascii_lowercase()),
+        };
+        if let Some(lower_ext) = lower_ext {
+            match lower_ext.as_str() {
+                "m3u" | "m3u8" | "pls" => InferredLocationType::Playlist,
+                "aac" => InferredLocationType::Audio,
+                "mp1" | "mp2" | "mp3" | "mp4" | "m4a" => InferredLocationType::Audio,
+                "ogg" | "oga" | "opus" | "flac" => InferredLocationType::Audio,
+                "wav" => InferredLocationType::Audio,
+                "webm" => InferredLocationType::Audio,
+                _ => InferredLocationType::Unknown,
+            }
+        } else {
+            InferredLocationType::Unknown
         }
     }
 }
@@ -114,6 +165,63 @@ mod tests {
         assert_eq!(
             "failed to parse location \"://example.com/foo.mp3\": relative URL without a base",
             err
+        );
+    }
+
+    #[test]
+    fn infer_type() {
+        let playlist_extensions = &[".m3u", ".m3u8", ".pls"];
+        let audio_extensions = &[
+            ".aac", ".mp1", ".mp2", ".mp3", ".mp4", ".m4a", ".ogg", ".oga", ".opus", ".flac",
+            ".wav", ".webm",
+        ];
+        for ext in playlist_extensions {
+            assert_eq!(
+                InferredLocationType::Playlist,
+                Location::path(format!("foo{}", ext)).inferred_type()
+            );
+            assert_eq!(
+                InferredLocationType::Playlist,
+                Location::from_str(&format!("https://example.com/foo{}", ext))
+                    .unwrap()
+                    .inferred_type()
+            );
+        }
+        for ext in audio_extensions {
+            assert_eq!(
+                InferredLocationType::Audio,
+                Location::path(format!("foo{}", ext)).inferred_type()
+            );
+            assert_eq!(
+                InferredLocationType::Audio,
+                Location::from_str(&format!("https://example.com/foo{}", ext))
+                    .unwrap()
+                    .inferred_type()
+            );
+        }
+        assert_eq!(
+            InferredLocationType::Unknown,
+            Location::path("foo").inferred_type()
+        );
+        assert_eq!(
+            InferredLocationType::Unknown,
+            Location::path("foo.asdf").inferred_type()
+        );
+        assert_eq!(
+            InferredLocationType::Unknown,
+            Location::path("https://example.com/foo").inferred_type()
+        );
+    }
+
+    #[test]
+    fn extension() {
+        assert_eq!(None, Location::path("test").extension());
+        assert_eq!(Some("foo"), Location::path("test.foo").extension());
+        assert_eq!(
+            Some("foo"),
+            Location::from_str("https://example.com/test.foo")
+                .unwrap()
+                .extension()
         );
     }
 }

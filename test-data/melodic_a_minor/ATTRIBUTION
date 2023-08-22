@@ -1,0 +1,8 @@
+مهدی بزرگمهر, CC BY-SA 4.0 <https://creativecommons.org/licenses/by-sa/4.0>, via Wikimedia Commons
+Origin(2023-08-20): https://commons.wikimedia.org/wiki/File:Melodic_A_Minor.wav
+
+Original media was an uncompressed WAV file. This file was converted to the following formats for testing:
+- melodic_a_minor_1chan_16000hz_6s.ogg: Downsampled to 16,000 Hz mono and cut down to 6 seconds with a fadeout
+- melodic_a_minor_1chan_44100hz_6s.mp3: Kept at 44,100 Hz, downmixed to mono and cut down to 6 seconds with a fadeout
+- melodic_a_minor_1chan_48000hz_6s.mp3: Upsampled to 48,000 Hz mono and cut down to 6 seconds with a fadeout
+- melodic_a_minor_2chan_44100hz_11s.ogg: The original encoded as OGG Vorbis, 44100 Hz stereo

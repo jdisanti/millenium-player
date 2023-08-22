@@ -13,3 +13,9 @@
 // If not, see <https://www.gnu.org/licenses/>.
 
 pub mod location;
+
+/// Audio player thread.
+pub mod player;
+
+/// Audio metadata/tags.
+pub mod metadata;
