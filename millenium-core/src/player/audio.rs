@@ -14,15 +14,18 @@
 
 use cpal::{
     traits::{DeviceTrait, HostTrait, StreamTrait},
-    BuildStreamError, Device, DeviceNameError, Host, OutputCallbackInfo, PlayStreamError, Sample,
-    SampleRate, Stream, StreamError, SupportedStreamConfig, SupportedStreamConfigRange,
-    SupportedStreamConfigsError,
+    BuildStreamError, Device, DeviceNameError, Host, OutputCallbackInfo, PauseStreamError,
+    PlayStreamError, Sample, SampleFormat, SampleRate, Stream, StreamError, SupportedStreamConfig,
+    SupportedStreamConfigRange, SupportedStreamConfigsError,
 };
 use std::{
     any::Any,
     collections::VecDeque,
-    sync::{mpsc::Receiver, Arc, Mutex},
-    time::Duration,
+    sync::{
+        atomic::{self, AtomicBool, AtomicU64},
+        mpsc::Receiver,
+        Arc, Mutex,
+    },
 };
 use symphonia_core::audio::{
     AudioBuffer as SymphoniaAudioBuffer, AudioBufferRef as SymphoniaAudioBufferRef, Signal as _,
@@ -30,10 +33,10 @@ use symphonia_core::audio::{
 use symphonia_core::sample::Sample as SymphoniaSample;
 
 const PREFERRED_SAMPLE_RATE: SampleRate = SampleRate(44100);
-const DESIRED_QUEUE_LENGTH: Duration = Duration::from_millis(100);
+const DESIRED_QUEUE_LENGTH: u64 = 50 * 44100 / 1000; // 50ms
 
 #[derive(Debug, thiserror::Error)]
-pub(super) enum AudioDeviceError {
+pub enum AudioDeviceError {
     #[error("failed to query audio devices: {0}")]
     FailedToQueryDevices(#[source] cpal::DevicesError),
     #[error("failed to get audio device name: {0}")]
@@ -70,20 +73,59 @@ pub(super) enum AudioDeviceError {
         #[source]
         PlayStreamError,
     ),
+    #[error("failed to pause stream: {0}")]
+    FailedToPauseStream(
+        #[from]
+        #[source]
+        PauseStreamError,
+    ),
+}
+
+/// Represents an output device that can play audio.
+pub(super) trait AudioDevice {
+    /// True if more audio data needs to be queued.
+    fn needs_more_chunks(&self) -> bool;
+
+    /// Queues another chunk of audio data.
+    fn queue_chunk(&self, chunk: &SymphoniaAudioBufferRef<'_>);
+
+    /// Returns the sample rate that playback occurs at.
+    fn playback_sample_rate(&self) -> u64;
+
+    /// Returns the amount of audio data queued in terms of time.
+    fn queued_samples(&self) -> u64;
+
+    /// Returns the amount of audio data consumed in number of samples.
+    fn samples_consumed(&self) -> u64;
+
+    /// Resets the amount of consumed audio data.
+    fn reset_samples_consumed(&self);
+
+    /// Stops playback and clears the queue.
+    fn stop(&self) -> Result<(), AudioDeviceError>;
+
+    /// Starts playback on the device.
+    fn play(&self) -> Result<(), AudioDeviceError>;
+
+    /// Pauses playback on the device.
+    fn pause(&self) -> Result<(), AudioDeviceError>;
+
+    /// Checks the device for errors.
+    fn healthcheck(&self) -> Result<(), AudioDeviceError>;
 }
 
 struct AudioBuffer<S> {
     data: Vec<S>,
-    duration: Duration,
+    samples: u64,
     next: usize,
 }
 
 impl<S> AudioBuffer<S> {
-    fn new(data: Vec<S>, duration: Duration) -> Self {
+    fn new(data: Vec<S>, samples: u64) -> Self {
         debug_assert!(!data.is_empty());
         Self {
             data,
-            duration,
+            samples,
             next: 0,
         }
     }
@@ -107,8 +149,7 @@ where
                 *buf_iter.next().unwrap() = *sample;
             }
         }
-        let duration = Duration::from_secs_f64(n as f64 / symphonia_buf.spec().rate as f64);
-        Self::new(buffer, duration)
+        Self::new(buffer, n as u64)
     }
 
     #[inline]
@@ -121,13 +162,13 @@ where
 
 struct BoxAudioBuffer {
     inner: Box<dyn Any + Send>,
-    duration: Duration,
+    samples: u64,
 }
 
 impl BoxAudioBuffer {
     fn new<S: Sample + SymphoniaSample + Send + 'static>(buffer: AudioBuffer<S>) -> Self {
         Self {
-            duration: buffer.duration,
+            samples: buffer.samples,
             inner: Box::new(buffer),
         }
     }
@@ -142,11 +183,79 @@ impl BoxAudioBuffer {
     }
 }
 
-pub(super) struct AudioDevice {
+pub(super) struct NullAudioDevice {
+    config: SupportedStreamConfig,
+    buffers: Arc<Mutex<VecDeque<BoxAudioBuffer>>>,
+    samples_consumed: AtomicU64,
+}
+
+impl NullAudioDevice {
+    pub(super) fn new() -> Self {
+        Self {
+            config: SupportedStreamConfig::new(
+                2,
+                SampleRate(44100),
+                cpal::SupportedBufferSize::Unknown,
+                SampleFormat::F32,
+            ),
+            buffers: Arc::new(Mutex::new(VecDeque::new())),
+            samples_consumed: AtomicU64::new(0),
+        }
+    }
+}
+
+impl AudioDevice for NullAudioDevice {
+    fn needs_more_chunks(&self) -> bool {
+        self.buffers.lock().unwrap().len() < 3
+    }
+
+    fn queue_chunk(&self, chunk: &SymphoniaAudioBufferRef<'_>) {
+        let converted = convert_audio(&self.config, chunk);
+        let mut buffers = self.buffers.lock().unwrap();
+        buffers.push_back(converted);
+    }
+
+    fn playback_sample_rate(&self) -> u64 {
+        PREFERRED_SAMPLE_RATE.0 as u64
+    }
+
+    fn queued_samples(&self) -> u64 {
+        let buffers = self.buffers.lock().unwrap();
+        buffers.iter().map(|buf| buf.samples).sum()
+    }
+
+    fn samples_consumed(&self) -> u64 {
+        self.samples_consumed.load(atomic::Ordering::SeqCst)
+    }
+
+    fn reset_samples_consumed(&self) {
+        self.samples_consumed.store(0, atomic::Ordering::SeqCst);
+    }
+
+    fn play(&self) -> Result<(), AudioDeviceError> {
+        Ok(())
+    }
+
+    fn stop(&self) -> Result<(), AudioDeviceError> {
+        Ok(())
+    }
+
+    fn pause(&self) -> Result<(), AudioDeviceError> {
+        Ok(())
+    }
+
+    fn healthcheck(&self) -> Result<(), AudioDeviceError> {
+        Ok(())
+    }
+}
+
+pub(super) struct CpalAudioDevice {
     _device: Device,
-    _config: SupportedStreamConfig,
+    config: SupportedStreamConfig,
     stream: Stream,
     buffers: Arc<Mutex<VecDeque<BoxAudioBuffer>>>,
+    samples_consumed: Arc<AtomicU64>,
+    playing: AtomicBool,
     error_receiver: Receiver<AudioDeviceError>,
 }
 
@@ -154,6 +263,7 @@ macro_rules! create_stream {
     (
         selected_format = $selected_format:expr,
         config = $cfg:ident,
+        samples_consumed = $samples_consumed:ident,
         buffers = $buf:ident,
         device = $device:ident,
         stream_writer = $stream_writer:ident,
@@ -163,14 +273,21 @@ macro_rules! create_stream {
         ]
     ) => {
         match $selected_format {
-            $(cpal::SampleFormat::$uf =>
-                $device.build_output_stream($cfg, $stream_writer::<$lf>($buf.clone()), $error_callback, None),)+
+            $(
+                cpal::SampleFormat::$uf => $device.build_output_stream(
+                    $cfg,
+                    $stream_writer::<$lf>($samples_consumed.clone(),
+                    $buf.clone()),
+                    $error_callback,
+                    None
+                ),
+            )+
             _ => unreachable!("unsupported sample format: {:?} (this is a bug)", $selected_format),
         }
     };
 }
 
-impl AudioDevice {
+impl CpalAudioDevice {
     pub(super) fn new(
         preferred_output_device_name: Option<&str>,
     ) -> Result<Self, AudioDeviceError> {
@@ -188,16 +305,18 @@ impl AudioDevice {
             config.sample_format()
         );
 
-        let buffers = Arc::new(Mutex::new(VecDeque::new()));
         fn stream_writer<S: Sample + SymphoniaSample + 'static>(
+            samples_consumed: Arc<AtomicU64>,
             buffers: Arc<Mutex<VecDeque<BoxAudioBuffer>>>,
         ) -> impl FnMut(&mut [S], &OutputCallbackInfo) + Send + 'static {
             move |data: &mut [S], info| {
                 let mut buffers = buffers.lock().unwrap();
-                write_audio_data(&mut buffers, data, info);
+                write_audio_data(samples_consumed.clone(), &mut buffers, data, info);
             }
         }
 
+        let samples_consumed = Arc::new(AtomicU64::new(0));
+        let buffers = Arc::new(Mutex::new(VecDeque::new()));
         let (stream, error_receiver) = {
             let cfg = &config.config();
             let (err_tx, err_rx) = std::sync::mpsc::channel();
@@ -210,6 +329,7 @@ impl AudioDevice {
             let stream = create_stream!(
                 selected_format = config.sample_format(),
                 config = cfg,
+                samples_consumed = samples_consumed,
                 buffers = buffers,
                 device = device,
                 stream_writer = stream_writer,
@@ -227,49 +347,66 @@ impl AudioDevice {
             );
             stream.map(|stream| (stream, err_rx))
         }?;
-        stream.play()?;
+        stream.pause()?;
 
         Ok(Self {
             _device: device,
-            _config: config,
+            config,
             stream,
             buffers,
+            samples_consumed,
+            playing: AtomicBool::new(false),
             error_receiver,
         })
     }
+}
 
-    fn queued_duration(&self) -> Duration {
-        let buffers = self.buffers.lock().unwrap();
-        buffers.iter().map(|buf| buf.duration).sum()
+impl AudioDevice for CpalAudioDevice {
+    fn needs_more_chunks(&self) -> bool {
+        self.queued_samples() < DESIRED_QUEUE_LENGTH
     }
 
-    pub(super) fn needs_more_chunks(&self) -> bool {
-        self.queued_duration() < DESIRED_QUEUE_LENGTH
-    }
-
-    pub(super) fn queue_chunk(&self, chunk: &SymphoniaAudioBufferRef<'_>) {
-        let converted = convert_audio(&self._config, chunk);
+    fn queue_chunk(&self, chunk: &SymphoniaAudioBufferRef<'_>) {
+        let converted = convert_audio(&self.config, chunk);
         let mut buffers = self.buffers.lock().unwrap();
         buffers.push_back(converted);
     }
 
-    #[allow(dead_code)] // TODO remove once used
-    pub(super) fn stop(&self) {
-        let mut buffers = self.buffers.lock().unwrap();
-        buffers.clear();
+    fn queued_samples(&self) -> u64 {
+        let buffers = self.buffers.lock().unwrap();
+        buffers.iter().map(|buf| buf.samples).sum()
     }
 
-    pub(super) fn play(&self) {
-        // TODO: error handling
-        self.stream.play().unwrap();
+    fn playback_sample_rate(&self) -> u64 {
+        self.config.sample_rate().0 as u64
     }
 
-    pub(super) fn pause(&self) {
-        // TODO: error handling
-        self.stream.pause().unwrap();
+    fn samples_consumed(&self) -> u64 {
+        self.samples_consumed.load(atomic::Ordering::SeqCst)
     }
 
-    pub(super) fn healthcheck(&self) -> Result<(), AudioDeviceError> {
+    fn reset_samples_consumed(&self) {
+        self.samples_consumed.store(0, atomic::Ordering::SeqCst)
+    }
+
+    fn stop(&self) -> Result<(), AudioDeviceError> {
+        self.buffers.lock().unwrap().clear();
+        self.pause()
+    }
+
+    fn play(&self) -> Result<(), AudioDeviceError> {
+        self.stream.play()?;
+        self.playing.store(true, atomic::Ordering::SeqCst);
+        Ok(())
+    }
+
+    fn pause(&self) -> Result<(), AudioDeviceError> {
+        self.stream.pause()?;
+        self.playing.store(false, atomic::Ordering::SeqCst);
+        Ok(())
+    }
+
+    fn healthcheck(&self) -> Result<(), AudioDeviceError> {
         if let Ok(err) = self.error_receiver.try_recv() {
             return Err(err);
         }
@@ -279,6 +416,7 @@ impl AudioDevice {
 
 // TODO unit test
 fn write_audio_data<S: Sample + SymphoniaSample + 'static>(
+    samples_consumed: Arc<AtomicU64>,
     buffers: &mut VecDeque<BoxAudioBuffer>,
     data: &mut [S],
     _: &OutputCallbackInfo,
@@ -298,6 +436,7 @@ fn write_audio_data<S: Sample + SymphoniaSample + 'static>(
         };
         *sample = next.unwrap_or(S::EQUILIBRIUM);
     }
+    samples_consumed.fetch_add(data.len() as u64, atomic::Ordering::SeqCst);
 }
 
 macro_rules! convert_format {

@@ -12,12 +12,12 @@
 // You should have received a copy of the GNU General Public License along with Millenium Player.
 // If not, see <https://www.gnu.org/licenses/>.
 
-use crate::location::Location;
-use crate::player::message::{FromPlayerMessage, ToPlayerMessage};
-
-use super::audio::AudioDevice;
+use super::audio::{CpalAudioDevice, NullAudioDevice};
 use super::source::AudioSource;
 use super::{message, PlayerThreadError, PlayerThreadHandle};
+use crate::location::Location;
+use crate::player::audio::AudioDevice;
+use crate::player::message::{FromPlayerMessage, ToPlayerMessage};
 use std::sync::mpsc;
 use std::thread;
 use std::time::Duration;
@@ -41,7 +41,7 @@ impl State {
 }
 
 pub struct PlayerThread {
-    device: AudioDevice,
+    device: Box<dyn AudioDevice>,
     to_rx: mpsc::Receiver<message::ToPlayerMessage>,
     from_tx: mpsc::Sender<message::FromPlayerMessage>,
 }
@@ -52,8 +52,13 @@ impl PlayerThread {
         from_tx: mpsc::Sender<message::FromPlayerMessage>,
         preferred_output_device_name: Option<String>,
     ) -> Self {
-        let device = AudioDevice::new(preferred_output_device_name.as_deref())
-            .expect("failed to create device");
+        let device = CpalAudioDevice::new(preferred_output_device_name.as_deref())
+            .map(|d| Box::new(d) as Box<dyn AudioDevice>)
+            .unwrap_or_else(|err| {
+                log::error!("{err}");
+                let _ = from_tx.send(FromPlayerMessage::AudioDeviceCreationFailed(err));
+                Box::new(NullAudioDevice::new())
+            });
 
         Self {
             device,
@@ -148,13 +153,13 @@ impl PlayerThread {
                     log::info!("loaded metadata: {:?}", metadata);
                     self.send(FromPlayerMessage::MetadataLoaded(metadata.clone()));
                 }
-                self.device.pause();
+                self.device.pause().expect("failed to pause audio stream");
                 let state = if let Some(new_state) = self.queue_chunks(&mut source) {
                     new_state
                 } else {
                     State::Playing(source)
                 };
-                self.device.play();
+                self.device.play().expect("failed to pause audio stream");
                 state
             }
             State::Playing(mut source) => {

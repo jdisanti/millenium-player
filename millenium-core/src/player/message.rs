@@ -12,7 +12,7 @@
 // You should have received a copy of the GNU General Public License along with Millenium Player.
 // If not, see <https://www.gnu.org/licenses/>.
 
-use super::source::AudioSourceError;
+use super::{audio::AudioDeviceError, source::AudioSourceError};
 use crate::{location::Location, metadata::Metadata};
 
 pub enum FromPlayerMessage {
@@ -26,6 +26,8 @@ pub enum FromPlayerMessage {
     FailedToDecodeAudio(AudioSourceError),
     /// The audio device failed.
     AudioDeviceFailed(String),
+    /// Failed to create an audio device.
+    AudioDeviceCreationFailed(AudioDeviceError),
 }
 
 pub enum ToPlayerMessage {
