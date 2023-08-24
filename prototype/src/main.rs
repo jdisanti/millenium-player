@@ -23,6 +23,9 @@ use drag_and_drop::prototype_eframe_drag_and_drop;
 mod waveform;
 use waveform::prototype_waveform;
 
+mod wry_test;
+use wry_test::prototype_wry_test;
+
 #[derive(Debug, clap::Subcommand)]
 enum Prototype {
     /// Runs the prototype for playing audio
@@ -31,6 +34,8 @@ enum Prototype {
     EframeDragAndDrop,
     /// Waveform display
     Waveform,
+    /// Test of using Wry+Tao+Muda for UI
+    WryTest,
 }
 
 #[derive(Debug, Parser)]
@@ -47,5 +52,6 @@ fn main() {
         Prototype::PlayAudio => prototype_play_audio(),
         Prototype::EframeDragAndDrop => prototype_eframe_drag_and_drop(),
         Prototype::Waveform => prototype_waveform(),
+        Prototype::WryTest => prototype_wry_test(),
     }
 }

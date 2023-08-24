@@ -23,5 +23,9 @@ publish = false
 clap = { version = "4.3.21", features = ["derive"] }
 eframe = "0.22.0"
 egui = "0.22.0"
+global-hotkey = "0.2.4"
+http = "0.2.9"
+muda = "0.8.5"
 rodio = { version = "0.17.1", default-features = false, features = ["symphonia-all"] }
 rustfft = "6.1.0"
+wry = "0.31.1"
