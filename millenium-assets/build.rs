@@ -12,7 +12,34 @@
 // You should have received a copy of the GNU General Public License along with Millenium Player.
 // If not, see <https://www.gnu.org/licenses/>.
 
-use std::process::{Command, Stdio};
+use std::{
+    io,
+    process::{self, Command, Stdio},
+};
+
+#[cfg(target_os = "windows")]
+fn npm(args: &[&str]) -> Command {
+    let mut command = Command::new("cmd");
+    command.current_dir(env!("CARGO_MANIFEST_DIR"));
+    command.stdout(Stdio::inherit());
+    command.stderr(Stdio::inherit());
+    command
+        .arg("/C")
+        .arg(format!("npm {}", args.to_vec().join(" ")));
+    eprintln!("running: {command:?}");
+    command
+}
+
+#[cfg(not(target_os = "windows"))]
+fn npm(args: &[&str]) -> Command {
+    let mut command = Command::new("npm");
+    command.current_dir(env!("CARGO_MANIFEST_DIR"));
+    command.stdout(Stdio::inherit());
+    command.stderr(Stdio::inherit());
+    command.args(args);
+    eprintln!("running: {command:?}");
+    command
+}
 
 fn main() {
     // Ignore file changes in debug mode since debug loads the files from the file system.
@@ -22,22 +49,24 @@ fn main() {
         println!("cargo:rerun-if-changed=build.rs");
     }
 
-    Command::new("npm")
-        .arg("install")
-        .current_dir(env!("CARGO_MANIFEST_DIR"))
-        .stdout(Stdio::inherit())
-        .stderr(Stdio::inherit())
-        .output()
-        .unwrap();
+    npm(&["install"]).output().map_err(handle_error).unwrap();
 
     for target in ["install", "clean", "build", "copy"] {
-        Command::new("npm")
-            .arg("run")
-            .arg(target)
-            .current_dir(env!("CARGO_MANIFEST_DIR"))
-            .stdout(Stdio::inherit())
-            .stderr(Stdio::inherit())
+        npm(&["run", target])
             .output()
+            .map_err(handle_error)
             .unwrap();
     }
+}
+
+fn handle_error(error: io::Error) -> ! {
+    if let io::ErrorKind::NotFound = error.kind() {
+        eprintln!(
+            "npm not found on PATH. Please install npm and try again.\n\nPATH: {}",
+            std::env::var("PATH").unwrap_or_else(|_| String::from("<not set>"))
+        );
+    } else {
+        eprintln!("unexpected error running npm: {}", error);
+    }
+    process::exit(1);
 }
