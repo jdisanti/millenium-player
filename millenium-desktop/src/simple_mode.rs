@@ -13,6 +13,7 @@
 // If not, see <https://www.gnu.org/licenses/>.
 
 use crate::{error::FatalError, APP_TITLE};
+use millenium_assets::asset;
 use millenium_core::{
     location::Location,
     player::{
@@ -183,40 +184,11 @@ impl OsxAppMenu {
 fn create_webview(window: tao::window::Window) -> Result<wry::webview::WebView, FatalError> {
     let webview = wry::webview::WebViewBuilder::new(window)
         .map_err(|err| FatalError::new("failed to create web view", err))?
-        .with_custom_protocol("internal".into(), move |request| {
-            let path = request.uri().path();
-            let response: http::Response<String> = match path {
-                "/index.html" => {
-                    let html = r#"
-                        <html>
-                        <body style="color:#FFF;background-color:rgba(1, 1, 1, 1);">
-                            <h1>TODO</h1>
-                            <button onclick="window.ipc.postMessage('test IPC message')">Test IPC</button>
-                            <div id="testnum"></div>
-                            <script>
-                                function set_number(number) {
-                                    document.getElementById("testnum").innerHTML = number;
-                                }
-                            </script>
-                        </body>
-                        </html>
-                        "#;
-                    http::Response::builder()
-                        .status(200)
-                        .body(html.into())
-                        .unwrap()
-                }
-                _ => http::Response::builder()
-                    .status(404)
-                    .body("Not Found".into())
-                    .unwrap(),
-            };
-            Ok(response.map(|b| Cow::Owned(b.into_bytes())))
-        })
+        .with_custom_protocol("internal".into(), internal_asset)
         .with_ipc_handler(|_window, message| {
             dbg!(message);
         })
-        .with_url("internal://localhost/index.html")
+        .with_url("internal://localhost/simple_mode.html")
         .map_err(|err| FatalError::new("failed to set web view URL", err))?
         .with_file_drop_handler(|_window, event| {
             dbg!(event);
@@ -227,4 +199,24 @@ fn create_webview(window: tao::window::Window) -> Result<wry::webview::WebView, 
         .build()
         .map_err(|err| FatalError::new("failed to create web view", err))?;
     Ok(webview)
+}
+
+fn internal_asset(
+    request: &http::Request<Vec<u8>>,
+) -> Result<http::Response<Cow<'static, [u8]>>, wry::Error> {
+    let path = request.uri().path();
+    log::info!("loading asset \"{path}\"");
+    match asset(&path[1..]) {
+        Ok(asset) => Ok(http::Response::builder()
+            .status(200)
+            .body(Cow::Owned(asset))
+            .unwrap()),
+        Err(err) => {
+            log::error!("{err}");
+            Ok(http::Response::builder()
+                .status(404)
+                .body(Cow::Owned(format!("{err}").into_bytes()))
+                .unwrap())
+        }
+    }
 }

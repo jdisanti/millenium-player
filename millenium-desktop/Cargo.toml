@@ -26,6 +26,7 @@ camino = "1.1.6"
 clap = { version = "4.3.21", default-features = false, features = ["std", "help", "usage"] }
 http = "0.2.9"
 log = "0.4.20"
+millenium-assets = { path = "../millenium-assets" }
 millenium-core = { path = "../millenium-core" }
 rfd = "0.11.4"
 simplelog = "0.12.1"

@@ -16,6 +16,7 @@ use std::borrow::Cow;
 use std::error::Error as StdError;
 use std::fmt;
 
+use millenium_assets::AssetError;
 use millenium_core::player::PlayerThreadError;
 
 /// A boxed error that is send and sync.
@@ -86,6 +87,12 @@ impl From<clap::Error> for FatalError {
 
 impl From<PlayerThreadError> for FatalError {
     fn from(err: PlayerThreadError) -> Self {
+        Self::source_only(err)
+    }
+}
+
+impl From<AssetError> for FatalError {
+    fn from(err: AssetError) -> Self {
         Self::source_only(err)
     }
 }

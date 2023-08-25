@@ -1,5 +1,6 @@
 [workspace]
 members = [
+    "millenium-assets",
     "millenium-desktop",
     "millenium-core",
     "prototype",
