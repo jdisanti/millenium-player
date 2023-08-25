@@ -1,0 +1,14 @@
+{
+  "name": "millenium-assets",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "clean": "rm -rf build",
+    "build": "tsc",
+    "copy": "mkdir -p build && cp -r static/* build/"
+  },
+  "license": "GPL-3.0",
+  "dependencies": {
+    "typescript": "^5.2.2"
+  }
+}

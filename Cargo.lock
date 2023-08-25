@@ -2296,6 +2296,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "millenium-assets"
+version = "0.1.0"
+dependencies = [
+ "log",
+ "once_cell",
+]
+
+[[package]]
 name = "millenium-core"
 version = "0.1.0"
 dependencies = [
@@ -2319,6 +2327,7 @@ dependencies = [
  "clap",
  "http",
  "log",
+ "millenium-assets",
  "millenium-core",
  "muda",
  "pretty_assertions",
