@@ -12,19 +12,24 @@
 // You should have received a copy of the GNU General Public License along with Millenium Player.
 // If not, see <https://www.gnu.org/licenses/>.
 
+use crate::error::FatalError;
 use std::env;
-use std::error::Error as StdError;
+
+const APP_TITLE: &str = "Millenium Player";
 
 /// Command-line argument parsing.
 mod args;
 
+/// Common error types.
+mod error;
+
 /// Simple audio player mode with no library management features
 mod simple_mode;
 
-fn do_main() -> Result<(), Box<dyn StdError>> {
+fn do_main() -> Result<(), FatalError> {
     let mode = args::parse(env::args_os())?;
-    let result = match mode {
-        args::Mode::Simple { locations } => simple_mode::SimpleMode::run(&locations),
+    match mode {
+        args::Mode::Simple { locations } => simple_mode::SimpleModeUi::new(&locations)?.run(),
         args::Mode::Library {
             storage_path,
             audio_path,
@@ -32,9 +37,7 @@ fn do_main() -> Result<(), Box<dyn StdError>> {
             let (_, _) = (storage_path, audio_path);
             unimplemented!("library mode hasn't been implemented yet")
         }
-    };
-    result?;
-    Ok(())
+    }
 }
 
 fn main() {

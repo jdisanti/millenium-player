@@ -33,7 +33,7 @@ use symphonia_core::audio::{
 use symphonia_core::sample::Sample as SymphoniaSample;
 
 const PREFERRED_SAMPLE_RATE: SampleRate = SampleRate(44100);
-const DESIRED_QUEUE_LENGTH: u64 = 50 * 44100 / 1000; // 50ms
+const DESIRED_QUEUE_LENGTH: u64 = 100 * 44100 / 1000; // 100ms
 
 #[derive(Debug, thiserror::Error)]
 pub enum AudioDeviceError {
