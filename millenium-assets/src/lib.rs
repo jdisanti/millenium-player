@@ -12,6 +12,8 @@
 // You should have received a copy of the GNU General Public License along with Millenium Player.
 // If not, see <https://www.gnu.org/licenses/>.
 
+#![warn(unreachable_pub)]
+
 use crate::asset::Asset;
 use once_cell::sync::Lazy;
 use std::collections::HashMap;
@@ -28,23 +30,31 @@ macro_rules! asset {
             { crate::asset::Asset::from_path_release(include_bytes!(concat!("../build/", $path))) }
         }
     };
-    ($name:ident => $path:literal / $doc:literal) => {
+    (pub(crate) $name:ident => $path:literal / $doc:literal) => {
         #[doc = $doc]
-        pub(crate) static $name: once_cell::sync::Lazy<crate::asset::Asset> =
-            once_cell::sync::Lazy::new(|| asset!($path));
+        pub(crate) static $name: Lazy<Asset> = Lazy::new(|| asset!($path));
     };
-    ($($path:literal / $doc:literal,)+) => {
-        once_cell::sync::Lazy::<std::collections::HashMap<&'static str, Asset>>::new(|| {
-            [
-                $(($path, asset!($path)),)+
-            ].into_iter().collect()
-        })
+    (pub $name:ident => $path:literal / $doc:literal) => {
+        #[doc = $doc]
+        pub static $name: Lazy<Asset> = Lazy::new(|| asset!($path));
+    };
+    ($($name:ident => $path:literal / $doc:literal,)+) => {
+        $(asset!(pub $name => $path / $doc);)+
+        static ASSETS: Lazy<HashMap<&'static str, &'static Lazy<Asset>>> =
+            Lazy::<HashMap<&'static str, &'static Lazy<Asset>>>::new(|| {
+                let mut assets = HashMap::new();
+                $(assets.insert($path, &$name);)+
+                assets
+            });
     };
 }
 
-static ASSETS: Lazy<HashMap<&'static str, Asset>> = asset! {
-    "simple_mode.html" / "The HTML file for simple mode.",
-};
+asset! {
+    CSS_STYLE => "style.css" / "The CSS file for the UI.",
+    FONT_CANTARELL => "cantarell/Cantarell-VF.otf" / "The main font for the UI.",
+    HTML_SIMPLE_MODE => "simple_mode.html" / "The HTML file for simple mode.",
+    JS_INDEX => "index.js" / "The JavaScript entry point.",
+}
 
 /// Returns the asset with the given name, or an error if it's not found.
 pub fn asset(name: &str) -> Result<Vec<u8>, AssetError> {
@@ -63,5 +73,6 @@ pub fn asset(name: &str) -> Result<Vec<u8>, AssetError> {
 
 #[cfg(test)]
 pub(crate) mod test {
-    asset!(TEST_ASSET => "test_asset.txt" / "Asset for unit testing.");
+    use super::*;
+    asset!(pub(crate) TEST_ASSET => "test_asset.txt" / "Asset for unit testing.");
 }

@@ -52,7 +52,8 @@ impl SimpleModeUi {
         let event_loop = tao::event_loop::EventLoop::new();
         let main_window = tao::window::WindowBuilder::new()
             .with_title(APP_TITLE)
-            .with_decorations(true)
+            .with_decorations(false)
+            .with_transparent(true)
             .build(&event_loop)
             .map_err(|err| FatalError::new("failed to create window", err))?;
         let main_web_view = create_webview(main_window)?;

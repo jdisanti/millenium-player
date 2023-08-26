@@ -38,7 +38,7 @@ impl SwitchingAssetContent {
 impl fmt::Debug for SwitchingAssetContent {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::FileSystem(_) => write!(f, "file-system path (debug mode)"),
+            Self::FileSystem(fs) => write!(f, "file-system path \"{}\" (debug mode)", fs.path),
             Self::EmbeddedAsset(_) => write!(f, "embedded"),
         }
     }
@@ -70,13 +70,13 @@ impl AssetContent for EmbeddedAsset {
 }
 
 #[derive(Debug)]
-pub(crate) struct Asset {
+pub struct Asset {
     contents: SwitchingAssetContent,
 }
 
 #[allow(dead_code)]
 impl Asset {
-    pub(crate) fn contents(&self) -> Result<Vec<u8>, AssetError> {
+    pub fn contents(&self) -> Result<Vec<u8>, AssetError> {
         self.contents.contents()
     }
 

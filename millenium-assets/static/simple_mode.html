@@ -2,9 +2,11 @@
 <html lang="en">
     <head>
         <meta charset="UTF-8">
+        <link rel="stylesheet" href="style.css">
     </head>
-    <body>
+    <body id="theme-default">
         TODO
-        <button onclick="window.ipc.postMessage('test IPC message')">Test IPC</button>
+        <button onclick="millenium.Message.send('test', 'test IPC message')">Test IPC</button>
+        <script type="text/javascript" src="index.js"></script>
     </body>
 </html>

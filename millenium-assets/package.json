@@ -3,12 +3,42 @@
   "version": "1.0.0",
   "private": true,
   "scripts": {
-    "clean": "rm -rf build",
-    "build": "tsc",
-    "copy": "mkdir -p build && cp -r static/* build/"
+    "build": "npm run build-ts && npm run build-less",
+    "build-less": "lessc style/index.less build/style.css",
+    "build-ts": "tsc && webpack",
+    "clean": "rm -rf build && mkdir -p build",
+    "copy": "cp -r static/* build/",
+    "watch": "npm run clean && npm-watch"
+  },
+  "watch": {
+    "copy": {
+      "patterns": [
+        "static"
+      ],
+      "extensions": "html"
+    },
+    "build-less": {
+      "patterns": [
+        "style"
+      ],
+      "extensions": "less"
+    },
+    "build-ts": {
+      "patterns": [
+        "ts"
+      ],
+      "extensions": "ts"
+    }
+  },
+  "watchGlobalConfig": {
+    "verbose": true
   },
   "license": "GPL-3.0",
   "dependencies": {
-    "typescript": "^5.2.2"
+    "less": "^4.2.0",
+    "npm-watch": "^0.11.0",
+    "typescript": "^5.2.2",
+    "webpack": "^5.88.2",
+    "webpack-cli": "^5.1.4"
   }
 }

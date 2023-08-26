@@ -33,7 +33,7 @@ simplelog = "0.12.1"
 tao = "0.22.2"
 thiserror = "1.0.47"
 url = "2.4.0"
-wry = "0.31.1"
+wry = { version = "0.31.1", features = ["transparent"] }
 
 [dev-dependencies]
 pretty_assertions = "1.4.0"
