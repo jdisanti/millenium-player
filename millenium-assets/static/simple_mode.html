@@ -5,8 +5,23 @@
         <link rel="stylesheet" href="style.css">
     </head>
     <body id="theme-default">
-        TODO
-        <button onclick="millenium.Message.send('test', 'test IPC message')">Test IPC</button>
+        <div id="simple-window" class="target-macos">
+            <div id="title-bar">
+                <div class="button-bar">
+                    <button type="button" class="close"></button>
+                    <button type="button" class="minimize" disabled="true"></button>
+                    <button type="button" class="maximize" disabled="true"></button>
+                </div>
+                <div class="title-bar-text">
+                    Millenium Player
+                </div>
+            </div>
+            <div style="padding:10px;">
+                TODO
+                <button onclick="millenium.Message.send('test', 'test IPC message')">Test IPC</button>
+            </div>
+        </div>
+
         <script type="text/javascript" src="index.js"></script>
     </body>
 </html>

@@ -14,5 +14,26 @@
 
 import { Message } from "./ipc";
 
-(window as any)["millenium"] = (window as any)["millenium"] || {};
-(window as any)["millenium"]["Message"] = Message;
+function $(selector: string): HTMLElement | null {
+    return document.querySelector(selector);
+}
+function $all(selector: string): NodeListOf<Element> {
+    return document.querySelectorAll(selector);
+}
+
+(function() {
+    const w = window as any;
+    w.millenium = {
+        Message,
+    };
+    Message.push_message_handler((msg: Message) => {
+        console.log("received message: ", msg);
+    });
+
+    $("#title-bar .close")!.addEventListener("click", () => {
+        Message.send("Quit", null);
+    });
+    $("#title-bar .title-bar-text")!.addEventListener("mousedown", () => {
+        Message.send("DragWindowStart", null);
+    });
+}());

@@ -12,15 +12,19 @@
 // You should have received a copy of the GNU General Public License along with Millenium Player.
 // If not, see <https://www.gnu.org/licenses/>.
 
+export type Direction = "to_rust" | "from_rust";
+
+export type MessageHandler = (msg: Message) => void;
+
 export class Message {
-    constructor(public kind: string, public data: any) { }
+    constructor(public direction: Direction, public kind: string, public data: any) { }
 
     static from_json(json: string): Message {
         let obj = JSON.parse(json);
-        if (obj.type == undefined || obj.data == undefined) {
+        if (obj.direction || obj.type == undefined || obj.data == undefined) {
             throw new Error(`invalid message: ${json}`);
         }
-        return new Message(obj.kind, obj.data);
+        return new Message(obj.direction, obj.kind, obj.data);
     }
 
     private to_json(): string {
@@ -29,6 +33,16 @@ export class Message {
 
     static send(kind: string, data: any) {
         const ipc: any = (window as any)["ipc"];
-        ipc.postMessage(new Message(kind, data).to_json());
+        ipc.postMessage(new Message("to_rust", kind, data).to_json());
+    }
+
+    private static handlers: MessageHandler[] = [];
+    static push_message_handler(handler: MessageHandler) {
+        Message.handlers.push(handler);
+    }
+    static handle(kind: string, data: any) {
+        for (let handler of Message.handlers) {
+            handler(new Message("from_rust", kind, data));
+        }
     }
 }

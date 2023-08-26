@@ -26,6 +26,10 @@ use std::{
     sync::mpsc::{self, Receiver},
     time::{Duration, Instant},
 };
+use tao::{
+    event::DeviceEvent,
+    event_loop::{EventLoop, EventLoopBuilder, EventLoopProxy},
+};
 
 struct Playlist {
     locations: Vec<Location>,
@@ -39,7 +43,7 @@ pub struct SimpleModeUi {
     _osx_app_menu: OsxAppMenu,
 
     _main_web_view: wry::webview::WebView,
-    event_loop: Option<tao::event_loop::EventLoop<()>>,
+    event_loop: Option<tao::event_loop::EventLoop<AppEvent>>,
 
     player: Option<PlayerThreadHandle>,
     // TODO receive and handle messages from player thread
@@ -49,14 +53,14 @@ pub struct SimpleModeUi {
 
 impl SimpleModeUi {
     pub fn new(locations: &[Location]) -> Result<Self, FatalError> {
-        let event_loop = tao::event_loop::EventLoop::new();
+        let event_loop: EventLoop<AppEvent> = EventLoopBuilder::with_user_event().build();
         let main_window = tao::window::WindowBuilder::new()
             .with_title(APP_TITLE)
             .with_decorations(false)
             .with_transparent(true)
             .build(&event_loop)
             .map_err(|err| FatalError::new("failed to create window", err))?;
-        let main_web_view = create_webview(main_window)?;
+        let main_web_view = create_webview(main_window, event_loop.create_proxy())?;
 
         let filtered_locations: Vec<Location> = locations
             .iter()
@@ -114,10 +118,25 @@ impl SimpleModeUi {
                         }
                     }
                 }
-                Event::WindowEvent {
+                Event::UserEvent(AppEvent::Quit)
+                | Event::WindowEvent {
                     event: WindowEvent::CloseRequested,
                     ..
                 } => *control_flow = ControlFlow::Exit,
+
+                Event::DeviceEvent {
+                    event: DeviceEvent::Button { .. },
+                    ..
+                } => {
+                    // This is just testing that IPC works in both directions
+                    let _ = dbg!(self
+                        ._main_web_view
+                        .evaluate_script("millenium.Message.handle('button_pressed', 'test');",));
+                }
+
+                Event::UserEvent(AppEvent::DragWindowStart) => {
+                    self._main_web_view.window().drag_window().unwrap()
+                }
 
                 _ => (),
             }
@@ -143,6 +162,13 @@ impl SimpleModeUi {
         }
         Ok(())
     }
+}
+
+#[derive(Debug, serde::Deserialize)]
+#[serde(tag = "kind")]
+enum AppEvent {
+    Quit,
+    DragWindowStart,
 }
 
 #[cfg(target_os = "macos")]
@@ -182,12 +208,20 @@ impl OsxAppMenu {
     }
 }
 
-fn create_webview(window: tao::window::Window) -> Result<wry::webview::WebView, FatalError> {
+fn create_webview(
+    window: tao::window::Window,
+    event_loop_proxy: EventLoopProxy<AppEvent>,
+) -> Result<wry::webview::WebView, FatalError> {
     let webview = wry::webview::WebViewBuilder::new(window)
         .map_err(|err| FatalError::new("failed to create web view", err))?
         .with_custom_protocol("internal".into(), internal_asset)
-        .with_ipc_handler(|_window, message| {
-            dbg!(message);
+        .with_ipc_handler(move |_window, message| {
+            match serde_json::from_str::<AppEvent>(&message) {
+                Ok(event) => event_loop_proxy.send_event(event).unwrap(),
+                Err(err) => {
+                    log::error!("failed to deserialize IPC message from the webview: {err}\nmessage: {message}")
+                }
+            }
         })
         .with_url("internal://localhost/simple_mode.html")
         .map_err(|err| FatalError::new("failed to set web view URL", err))?
