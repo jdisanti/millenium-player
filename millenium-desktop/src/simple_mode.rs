@@ -27,9 +27,11 @@ use std::{
     time::{Duration, Instant},
 };
 use tao::{
+    dpi::{LogicalSize, Size},
     event::DeviceEvent,
     event_loop::{EventLoop, EventLoopBuilder, EventLoopProxy},
 };
+use wry::webview::webview_version;
 
 struct Playlist {
     locations: Vec<Location>,
@@ -42,7 +44,7 @@ pub struct SimpleModeUi {
     #[cfg(target_os = "macos")]
     _osx_app_menu: OsxAppMenu,
 
-    _main_web_view: wry::webview::WebView,
+    main_web_view: wry::webview::WebView,
     event_loop: Option<tao::event_loop::EventLoop<AppEvent>>,
 
     player: Option<PlayerThreadHandle>,
@@ -58,6 +60,8 @@ impl SimpleModeUi {
             .with_title(APP_TITLE)
             .with_decorations(false)
             .with_transparent(true)
+            .with_resizable(false)
+            .with_inner_size(Size::Logical(LogicalSize::new(400.0, 200.0)))
             .build(&event_loop)
             .map_err(|err| FatalError::new("failed to create window", err))?;
         let main_web_view = create_webview(main_window, event_loop.create_proxy())?;
@@ -92,7 +96,7 @@ impl SimpleModeUi {
             #[cfg(target_os = "macos")]
             _osx_app_menu: OsxAppMenu::new()?,
 
-            _main_web_view: main_web_view,
+            main_web_view,
             event_loop: Some(event_loop),
 
             player: Some(player),
@@ -130,12 +134,12 @@ impl SimpleModeUi {
                 } => {
                     // This is just testing that IPC works in both directions
                     let _ = dbg!(self
-                        ._main_web_view
+                        .main_web_view
                         .evaluate_script("millenium.Message.handle('button_pressed', 'test');",));
                 }
 
                 Event::UserEvent(AppEvent::DragWindowStart) => {
-                    self._main_web_view.window().drag_window().unwrap()
+                    self.main_web_view.window().drag_window().unwrap()
                 }
 
                 _ => (),
@@ -212,6 +216,10 @@ fn create_webview(
     window: tao::window::Window,
     event_loop_proxy: EventLoopProxy<AppEvent>,
 ) -> Result<wry::webview::WebView, FatalError> {
+    log::info!(
+        "webview version: {}",
+        webview_version().as_deref().unwrap_or("unknown")
+    );
     let webview = wry::webview::WebViewBuilder::new(window)
         .map_err(|err| FatalError::new("failed to create web view", err))?
         .with_custom_protocol("internal".into(), internal_asset)
@@ -244,7 +252,8 @@ fn internal_asset(
     match asset(&path[1..]) {
         Ok(asset) => Ok(http::Response::builder()
             .status(200)
-            .body(Cow::Owned(asset))
+            .header("Content-Type", asset.mime)
+            .body(asset.contents)
             .unwrap()),
         Err(err) => {
             log::error!("{err}");

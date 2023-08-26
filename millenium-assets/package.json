@@ -3,11 +3,16 @@
   "version": "1.0.0",
   "private": true,
   "scripts": {
-    "build": "npm run build-ts && npm run build-less",
-    "build-less": "lessc style/index.less build/style.css",
+    "build": "npm run clean && npm run copy && npm run build-templates && npm run build-ts && npm run build-less",
+    "build-templates": "ts-node src/build-templates.ts",
+    "build-less": "lessc src/style/index.less build/style.css",
     "build-ts": "tsc && webpack",
-    "clean": "rm -rf build && mkdir -p build",
-    "copy": "cp -r static/* build/",
+    "clean": "run-script-os",
+    "clean:default": "rm -rf build && mkdir build",
+    "clean:win32": "rmdir /s /q build & mkdir build",
+    "copy": "run-script-os",
+    "copy:default": "cp -r static/* build/",
+    "copy:win32": "xcopy /e /k /h /i static build",
     "watch": "npm run clean && npm-watch"
   },
   "watch": {
@@ -17,15 +22,21 @@
       ],
       "extensions": "html"
     },
+    "build-templates": {
+      "patterns": [
+        "src"
+      ],
+      "extensions": "hbs"
+    },
     "build-less": {
       "patterns": [
-        "style"
+        "src/style"
       ],
       "extensions": "less"
     },
     "build-ts": {
       "patterns": [
-        "ts"
+        "src/ts"
       ],
       "extensions": "ts"
     }
@@ -35,8 +46,11 @@
   },
   "license": "GPL-3.0",
   "dependencies": {
+    "handlebars": "^4.7.8",
     "less": "^4.2.0",
     "npm-watch": "^0.11.0",
+    "run-script-os": "^1.1.6",
+    "ts-node": "^10.9.1",
     "typescript": "^5.2.2",
     "webpack": "^5.88.2",
     "webpack-cli": "^5.1.4"
