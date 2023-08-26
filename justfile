@@ -7,10 +7,10 @@ build-assets:
     cd millenium-assets; npm run build
 
 build: build-assets
-    cargo build millenium-desktop
+    cargo build --bin millenium-desktop
 
 release: build-assets
-    cargo build --release millenium-desktop
+    cargo build --release --bin millenium-desktop
 
 watch:
     cd millenium-assets; npm run watch
@@ -20,6 +20,8 @@ test: build-assets
     cargo test --all-features
     cargo clippy --all-features
 
+run:
+    cargo run --bin millenium-desktop -- simple
 run-hydrate:
     cargo run --bin millenium-desktop -- simple ./test-data/hydrate/hydrate.mp3
 

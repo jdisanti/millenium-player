@@ -30,10 +30,10 @@ function $all(selector: string): NodeListOf<Element> {
         console.log("received message: ", msg);
     });
 
-    $("#title-bar .close")!.addEventListener("click", () => {
+    $(".title-bar .close")!.addEventListener("click", () => {
         Message.send("Quit", null);
     });
-    $("#title-bar")!.addEventListener("mousedown", (event) => {
+    $(".title-bar")!.addEventListener("mousedown", (event) => {
         let target = event.target as HTMLElement | null;
         while (target) {
             if (target.classList.contains("button-bar")) {
