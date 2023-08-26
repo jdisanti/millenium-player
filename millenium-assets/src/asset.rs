@@ -149,10 +149,20 @@ mod tests {
             message.contains("failed to read asset"),
             "expected '{message}' to contain 'failed to read asset'"
         );
-        assert!(
-            message.contains("build/does-not-exist"),
-            "expected '{message}' to contain 'build/does-not-exist'"
-        );
+        #[cfg(not(target_os = "windows"))]
+        {
+            assert!(
+                message.contains("build/does-not-exist"),
+                "expected '{message}' to contain 'build/does-not-exist'"
+            );
+        }
+        #[cfg(target_os = "windows")]
+        {
+            assert!(
+                message.contains("build\\\\does-not-exist"),
+                "expected '{message}' to contain 'build\\\\does-not-exist'"
+            );
+        }
     }
 
     #[test]

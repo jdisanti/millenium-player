@@ -10,7 +10,7 @@ env:
   RUSTFLAGS: -Dwarnings
 
 jobs:
-  build:
+  test-linux:
     runs-on: ubuntu-latest
 
     steps:
@@ -20,6 +20,11 @@ jobs:
       with:
         toolchain: 1.71.1
         components: clippy, rustfmt
+    - name: Set up Rust cache
+      uses: Swatinem/rust-cache@v2
+    - uses: actions/setup-node@v3
+      with:
+        node-version: 18
     - name: Install dependencies
       run: |
         set -eux
@@ -37,3 +42,21 @@ jobs:
       run: cargo test --all-features
     - name: Clippy
       run: cargo clippy --all-features
+
+  test-windows:
+    runs-on: windows-latest
+
+    steps:
+    - uses: actions/checkout@v3
+    - name: Install Rust
+      uses: dtolnay/rust-toolchain@master
+      with:
+        toolchain: 1.71.1
+    - name: Set up Rust cache
+      uses: Swatinem/rust-cache@v2
+    - uses: actions/setup-node@v3
+      with:
+        node-version: 18
+    - name: Tests
+      shell: bash
+      run: cargo test --all-features
