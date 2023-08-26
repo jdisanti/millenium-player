@@ -12,7 +12,7 @@
 // You should have received a copy of the GNU General Public License along with Millenium Player.
 // If not, see <https://www.gnu.org/licenses/>.
 
-#title-bar {
+.title-bar {
     display: grid;
     align-items: center;
 
@@ -30,7 +30,7 @@
 //
 // Windows
 //
-.target-windows #title-bar {
+.target-windows .title-bar {
     @button-width: 48px;
     @button-height: 30px;
     @button-icon-size: 20px;
@@ -87,8 +87,8 @@
 //
 // MacOS
 //
-.target-macos #title-bar {
-    @button-size: 12px;
+.target-macos .title-bar {
+    @button-size: 16px;
 
     padding: 10px;
 
@@ -105,40 +105,32 @@
             float: left;
             display: block;
             position: relative;
-            border-radius: 6px;
             border: 0;
             padding: 0;
             width: @button-size;
             height: @button-size;
             text-align: center;
-            margin-right: 8px;
-        }
-        button::after {
-            position: absolute;
-            font-size: 12px;
-            content: "";
-            top: -2px;
-            left: 0;
-            width: @button-size;
-            height: @button-size;
+            margin-right: 6px;
+            .mask(url("material-symbols/circle.svg") 0 0 / 100% 100%);
         }
         button:disabled {
-            background-color: #666;
+            background-color: #5c5b50;
         }
 
-        .close {
-            background-color: #ff4500;
-            color: #700;
-        }
-        .close:active {
-            background-color: #ffb499;
-        }
-        .close:hover {
-            background-color: #ff6933;
-        }
+        .close { background-color: #fc5f57; }
+        .close:active { background-color: #fda09b !important; }
+        .close:hover { background-color: #fc8882; }
 
-        &:hover .close::after {
-            content: "\d7";
+        .close i {
+            position: absolute;
+            top: 2px;
+            left: 2px;
+            width: (@button-size - 4px);
+            height: (@button-size - 4px);
+        }
+        &:hover .close i {
+            background-color: #900;
+            .mask(url("material-symbols/close.svg") 0 0 / 100% 100%);
         }
     }
 }
