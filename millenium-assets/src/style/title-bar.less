@@ -1,0 +1,144 @@
+// This file is part of Millenium Player.
+// Copyright (C) 2023 John DiSanti.
+//
+// Millenium Player is free software: you can redistribute it and/or modify it under the terms of
+// the GNU General Public License as published by the Free Software Foundation, either version 3 of
+// the License, or (at your option) any later version.
+//
+// Millenium Player is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY;
+// without even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See
+// the GNU General Public License for more details.
+//
+// You should have received a copy of the GNU General Public License along with Millenium Player.
+// If not, see <https://www.gnu.org/licenses/>.
+
+#title-bar {
+    display: grid;
+    align-items: center;
+
+    .title-bar-text {
+        display: flex;
+        grid-row: 1;
+        grid-column: 2 / 3;
+        font-size: 13px;
+        font-weight: bold;
+        justify-content: center;
+        align-content: center;
+    }
+}
+
+//
+// Windows
+//
+.target-windows #title-bar {
+    @button-width: 48px;
+    @button-height: 30px;
+    @button-icon-size: 20px;
+    grid-template-columns: [left] @button-width [center] 1fr [right] @button-width;
+
+    .third-bar {
+        display: flex;
+        flex-direction: row;
+        flex-wrap: nowrap;
+        grid-row: 1;
+        grid-column: 1 / 3;
+
+        div {
+            width: @button-width;
+            height: @button-height;
+        }
+    }
+
+    .button-bar {
+        grid-row: 1;
+        grid-column: 3 / 3;
+        display: flex;
+        flex-direction: row;
+        flex-wrap: nowrap;
+        justify-content: flex-end;
+
+        button {
+            display: none;
+            position: relative;
+            width: @button-width;
+            height: @button-height;
+            background-color: rgba(0, 0, 0, 0);
+            border: 0;
+            transition: background-color 0.2s;
+
+            &:active { background-color: #af2f00 !important; }
+            &:hover { background-color: #ff4500; }
+        }
+        .close {
+            display: block;
+        }
+        .close i {
+            position: absolute;
+            top: ((@button-height - @button-icon-size) / 2px);
+            left: ((@button-width - @button-icon-size) / 2px);
+            width: @button-icon-size;
+            height: @button-icon-size;
+            background-color: #FFF;
+            .mask(url("material-symbols/close.svg") 0 0 / 100% 100%);
+        }
+    }
+}
+
+//
+// MacOS
+//
+.target-macos #title-bar {
+    @button-size: 12px;
+
+    padding: 10px;
+
+    .third-bar {
+        grid-row: 1;
+        grid-column: 3 / 3;
+    }
+
+    .button-bar {
+        grid-row: 1;
+        grid-column: 1 / 3;
+
+        button {
+            float: left;
+            display: block;
+            position: relative;
+            border-radius: 6px;
+            border: 0;
+            padding: 0;
+            width: @button-size;
+            height: @button-size;
+            text-align: center;
+            margin-right: 8px;
+        }
+        button::after {
+            position: absolute;
+            font-size: 12px;
+            content: "";
+            top: -2px;
+            left: 0;
+            width: @button-size;
+            height: @button-size;
+        }
+        button:disabled {
+            background-color: #666;
+        }
+
+        .close {
+            background-color: #ff4500;
+            color: #700;
+        }
+        .close:active {
+            background-color: #ffb499;
+        }
+        .close:hover {
+            background-color: #ff6933;
+        }
+
+        &:hover .close::after {
+            content: "\d7";
+        }
+    }
+}

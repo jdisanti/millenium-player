@@ -12,6 +12,8 @@
 // You should have received a copy of the GNU General Public License along with Millenium Player.
 // If not, see <https://www.gnu.org/licenses/>.
 
+#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
+
 use crate::error::FatalError;
 use std::env;
 

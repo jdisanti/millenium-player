@@ -18,7 +18,7 @@ use std::fmt;
 use std::path::PathBuf;
 
 trait AssetContent: Send + Sync {
-    fn contents(&self) -> Result<Vec<u8>, AssetError>;
+    fn contents(&self) -> Result<Cow<'static, [u8]>, AssetError>;
 }
 
 enum SwitchingAssetContent {
@@ -27,7 +27,7 @@ enum SwitchingAssetContent {
 }
 
 impl SwitchingAssetContent {
-    fn contents(&self) -> Result<Vec<u8>, AssetError> {
+    fn contents(&self) -> Result<Cow<'static, [u8]>, AssetError> {
         match self {
             Self::FileSystem(asset) => asset.contents(),
             Self::EmbeddedAsset(asset) => asset.contents(),
@@ -49,13 +49,13 @@ struct FileSystemAsset {
 }
 
 impl AssetContent for FileSystemAsset {
-    fn contents(&self) -> Result<Vec<u8>, AssetError> {
+    fn contents(&self) -> Result<Cow<'static, [u8]>, AssetError> {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
             .join("build")
             .join(self.path);
         let contents = std::fs::read(&path)
             .map_err(|err| AssetError::new(format!("failed to read asset {path:?}"), err))?;
-        Ok(contents)
+        Ok(Cow::Owned(contents))
     }
 }
 
@@ -64,30 +64,37 @@ struct EmbeddedAsset {
 }
 
 impl AssetContent for EmbeddedAsset {
-    fn contents(&self) -> Result<Vec<u8>, AssetError> {
-        Ok(self.contents.into())
+    fn contents(&self) -> Result<Cow<'static, [u8]>, AssetError> {
+        Ok(Cow::Borrowed(self.contents))
     }
 }
 
 #[derive(Debug)]
 pub struct Asset {
+    mime: &'static str,
     contents: SwitchingAssetContent,
 }
 
 #[allow(dead_code)]
 impl Asset {
-    pub fn contents(&self) -> Result<Vec<u8>, AssetError> {
+    pub fn mime(&self) -> &'static str {
+        self.mime
+    }
+
+    pub fn contents(&self) -> Result<Cow<'static, [u8]>, AssetError> {
         self.contents.contents()
     }
 
-    pub(crate) const fn from_path_debug(path: &'static str) -> Self {
+    pub(crate) const fn from_path_debug(mime: &'static str, path: &'static str) -> Self {
         Self {
+            mime,
             contents: SwitchingAssetContent::FileSystem(FileSystemAsset { path }),
         }
     }
 
-    pub(crate) const fn from_path_release(embedded: &'static [u8]) -> Self {
+    pub(crate) const fn from_path_release(mime: &'static str, embedded: &'static [u8]) -> Self {
         Self {
+            mime,
             contents: SwitchingAssetContent::EmbeddedAsset(EmbeddedAsset { contents: embedded }),
         }
     }
@@ -140,7 +147,7 @@ mod tests {
 
     #[test]
     fn it_should_fail_later() {
-        let asset = Asset::from_path_debug("does-not-exist");
+        let asset = Asset::from_path_debug("", "does-not-exist");
         let err = asset
             .contents()
             .expect_err("it should error on content retrieval");
@@ -167,12 +174,12 @@ mod tests {
 
     #[test]
     fn embedded_assets() {
-        let contents = Asset::from_path_release(b"test").contents().unwrap();
-        assert_eq!(&b"test"[..], &contents);
+        let contents = Asset::from_path_release("", b"test").contents().unwrap();
+        assert_eq!(&b"test"[..], &*contents);
     }
 
     #[test]
     fn test_asset() {
-        assert_eq!(&b"test"[..], &crate::test::TEST_ASSET.contents().unwrap());
+        assert_eq!(&b"test"[..], &*crate::test::TEST_ASSET.contents().unwrap());
     }
 }

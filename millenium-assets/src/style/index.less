@@ -1,0 +1,47 @@
+// This file is part of Millenium Player.
+// Copyright (C) 2023 John DiSanti.
+//
+// Millenium Player is free software: you can redistribute it and/or modify it under the terms of
+// the GNU General Public License as published by the Free Software Foundation, either version 3 of
+// the License, or (at your option) any later version.
+//
+// Millenium Player is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY;
+// without even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See
+// the GNU General Public License for more details.
+//
+// You should have received a copy of the GNU General Public License along with Millenium Player.
+// If not, see <https://www.gnu.org/licenses/>.
+
+@import "mixins";
+
+@font-face {
+    font-family: "Cantarell", sans-serif;
+    src: url("internal://localhost/cantarell/Cantarell-VF.otf");
+}
+
+*, ::before, ::after {
+    box-sizing: border-box;
+}
+
+body {
+    display: flex;
+    flex-flow: row nowrap;
+    overflow: hidden;
+    margin: 0;
+    padding: 0;
+    font-family: "Cantarell", sans-serif;
+    user-select: none;
+    -webkit-user-select: none;
+    cursor: default;
+}
+
+#window {
+    display: flex;
+    flex-flow: column nowrap;
+    border-radius: 16px;
+    width: 100%;
+    height: 100%;
+}
+
+@import "title-bar";
+@import "theme-default";

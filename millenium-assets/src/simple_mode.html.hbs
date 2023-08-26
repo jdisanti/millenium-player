@@ -3,18 +3,22 @@
     <head>
         <meta charset="UTF-8">
         <link rel="stylesheet" href="style.css">
+
+        <!-- Don't load favicon.ico -->
+        <link rel="icon" href="data:;base64,iVBORw0KGgo=">
     </head>
-    <body id="theme-default">
-        <div id="simple-window" class="target-macos">
+    <body id="theme-default" style="background-color:{{webview_background_color}}">
+        <div id="window" class="window target-{{target_os}}">
             <div id="title-bar">
                 <div class="button-bar">
-                    <button type="button" class="close"></button>
+                    <button type="button" class="close" aria-label="close"><i></i></button>
                     <button type="button" class="minimize" disabled="true"></button>
                     <button type="button" class="maximize" disabled="true"></button>
                 </div>
                 <div class="title-bar-text">
                     Millenium Player
                 </div>
+                <div class="third-bar"></div>
             </div>
             <div style="padding:10px;">
                 TODO
