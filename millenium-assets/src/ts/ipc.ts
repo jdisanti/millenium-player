@@ -15,8 +15,11 @@
 export type Direction = "to_rust" | "from_rust";
 
 export type MessageHandler = (msg: Message) => void;
+export type MessageHanderId = number;
 
 export class Message {
+    private static next_handler_id: MessageHanderId = 0;
+
     constructor(public direction: Direction, public kind: string, public data: any) { }
 
     static from_json(json: string): Message {
@@ -36,12 +39,17 @@ export class Message {
         ipc.postMessage(new Message("to_rust", kind, data).to_json());
     }
 
-    private static handlers: MessageHandler[] = [];
-    static push_message_handler(handler: MessageHandler) {
-        Message.handlers.push(handler);
+    private static handlers: { id: MessageHanderId, handler: MessageHandler}[] = [];
+    static push_message_handler(handler: MessageHandler): MessageHanderId {
+        Message.next_handler_id += 1;
+        Message.handlers.push({ id: Message.next_handler_id, handler });
+        return Message.next_handler_id;
+    }
+    static remove_message_handler(id: MessageHanderId) {
+        Message.handlers = Message.handlers.filter((handler) => handler.id != id);
     }
     static handle(kind: string, data: any) {
-        for (let handler of Message.handlers) {
+        for (let { id, handler } of Message.handlers) {
             handler(new Message("from_rust", kind, data));
         }
     }

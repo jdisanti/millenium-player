@@ -13,6 +13,7 @@
 // If not, see <https://www.gnu.org/licenses/>.
 
 import { Message } from "./ipc";
+import { Waveform } from "./waveform";
 
 function $(selector: string): HTMLElement | null {
     return document.querySelector(selector);
@@ -43,4 +44,7 @@ function $all(selector: string): NodeListOf<Element> {
         }
         Message.send("DragWindowStart", null);
     });
+
+    let waveform_canvas = $(".waveform")! as HTMLCanvasElement;
+    new Waveform(waveform_canvas);
 }());
