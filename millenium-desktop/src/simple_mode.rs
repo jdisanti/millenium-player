@@ -28,7 +28,6 @@ use std::{
 };
 use tao::{
     dpi::{LogicalSize, Size},
-    event::DeviceEvent,
     event_loop::{EventLoop, EventLoopBuilder, EventLoopProxy},
 };
 use wry::webview::webview_version;
@@ -109,6 +108,8 @@ impl SimpleModeUi {
         use tao::event::{Event, WindowEvent};
         use tao::event_loop::ControlFlow;
 
+        let mut last_waveform = Instant::now();
+
         let event_loop = self.event_loop.take().expect("event loop");
         event_loop.run(move |event, _, control_flow| {
             *control_flow = ControlFlow::WaitUntil(Instant::now() + Duration::from_millis(100));
@@ -128,18 +129,28 @@ impl SimpleModeUi {
                     ..
                 } => *control_flow = ControlFlow::Exit,
 
-                Event::DeviceEvent {
-                    event: DeviceEvent::Button { .. },
-                    ..
-                } => {
-                    // This is just testing that IPC works in both directions
-                    let _ = dbg!(self
-                        .main_web_view
-                        .evaluate_script("millenium.Message.handle('button_pressed', 'test');",));
-                }
-
                 Event::UserEvent(AppEvent::DragWindowStart) => {
                     self.main_web_view.window().drag_window().unwrap()
+                }
+
+                Event::MainEventsCleared => {
+                    if Instant::now() - last_waveform > Duration::from_millis(100) {
+                        last_waveform = Instant::now();
+                        let _ = self.main_web_view.evaluate_script(&format!(
+                            "millenium.Message.handle('WaveformData', {});",
+                            serde_json::to_string(&AppEvent::WaveformData {
+                                spectrum: vec![
+                                    0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0, 0.9, 0.8,
+                                    0.7, 0.6, 0.5, 0.4, 0.3, 0.2, 0.1
+                                ],
+                                amplitude: vec![
+                                    0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0, 0.9, 0.8,
+                                    0.7, 0.6, 0.5, 0.4, 0.3, 0.2, 0.1
+                                ]
+                            })
+                            .unwrap()
+                        ));
+                    }
                 }
 
                 _ => (),
@@ -168,11 +179,15 @@ impl SimpleModeUi {
     }
 }
 
-#[derive(Debug, serde::Deserialize)]
+#[derive(Debug, serde::Deserialize, serde::Serialize)]
 #[serde(tag = "kind")]
 enum AppEvent {
     Quit,
     DragWindowStart,
+    WaveformData {
+        spectrum: Vec<f32>,
+        amplitude: Vec<f32>,
+    },
 }
 
 #[cfg(target_os = "macos")]
