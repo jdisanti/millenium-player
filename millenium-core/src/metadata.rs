@@ -13,7 +13,7 @@
 // If not, see <https://www.gnu.org/licenses/>.
 
 use std::{borrow::Cow, cmp::Ordering, collections::BTreeSet, fmt, sync::Arc};
-use symphonia_core::meta::{StandardTagKey, StandardVisualKey};
+use symphonia::core::meta::{StandardTagKey, StandardVisualKey};
 
 #[derive(Debug, thiserror::Error)]
 #[error("{}", self.0)]
@@ -34,10 +34,10 @@ pub struct Metadata {
     pub other: BTreeSet<Tag>,
 }
 
-impl TryFrom<&symphonia_core::meta::Metadata<'_>> for Metadata {
+impl TryFrom<&symphonia::core::meta::Metadata<'_>> for Metadata {
     type Error = MetadataConversionError;
 
-    fn try_from(value: &symphonia_core::meta::Metadata<'_>) -> Result<Self, Self::Error> {
+    fn try_from(value: &symphonia::core::meta::Metadata<'_>) -> Result<Self, Self::Error> {
         let latest = value
             .current()
             .ok_or(MetadataConversionError("failed to read metadata in source"))?;
@@ -105,10 +105,10 @@ impl Ord for Tag {
     }
 }
 
-impl From<&symphonia_core::meta::Tag> for Tag {
-    fn from(value: &symphonia_core::meta::Tag) -> Self {
+impl From<&symphonia::core::meta::Tag> for Tag {
+    fn from(value: &symphonia::core::meta::Tag) -> Self {
         use base64::engine::{general_purpose::STANDARD as b64, Engine as _};
-        use symphonia_core::meta::Value;
+        use symphonia::core::meta::Value;
         Tag {
             key: value.key.clone(),
             value: match &value.value {
@@ -142,8 +142,8 @@ impl fmt::Debug for EmbeddedImage {
     }
 }
 
-impl From<&symphonia_core::meta::Visual> for EmbeddedImage {
-    fn from(value: &symphonia_core::meta::Visual) -> Self {
+impl From<&symphonia::core::meta::Visual> for EmbeddedImage {
+    fn from(value: &symphonia::core::meta::Visual) -> Self {
         Self {
             mime_type: value.media_type.clone(),
             tags: value.tags.iter().map(Tag::from).collect::<BTreeSet<_>>(),
@@ -156,7 +156,7 @@ impl From<&symphonia_core::meta::Visual> for EmbeddedImage {
 mod test {
     use super::*;
     use std::fs::File;
-    use symphonia_core::{
+    use symphonia::core::{
         formats::FormatOptions,
         io::{MediaSourceStream, MediaSourceStreamOptions},
         meta::MetadataOptions,

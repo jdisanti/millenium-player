@@ -13,6 +13,7 @@
 // If not, see <https://www.gnu.org/licenses/>.
 
 use super::audio::{CpalAudioDevice, NullAudioDevice};
+use super::sink::Sink;
 use super::source::AudioSource;
 use super::{message, PlayerThreadError, PlayerThreadHandle};
 use crate::location::Location;
@@ -42,6 +43,7 @@ impl State {
 
 pub struct PlayerThread {
     device: Box<dyn AudioDevice>,
+    current_sink: Option<Sink>,
     to_rx: mpsc::Receiver<message::ToPlayerMessage>,
     from_tx: mpsc::Sender<message::FromPlayerMessage>,
 }
@@ -62,6 +64,7 @@ impl PlayerThread {
 
         Self {
             device,
+            current_sink: None,
             to_rx,
             from_tx,
         }
@@ -87,7 +90,7 @@ impl PlayerThread {
             .expect("failed to send message back to owner of the player thread");
     }
 
-    fn run(self) {
+    fn run(mut self) {
         log::info!("player thread started");
 
         let mut state = Some(State::DoNothing);
@@ -137,7 +140,7 @@ impl PlayerThread {
         }
     }
 
-    fn handle_state(&self, state: State) -> State {
+    fn handle_state(&mut self, state: State) -> State {
         match state {
             State::LoadLocation(location) => {
                 log::info!("loading location: {:?}", location);
@@ -163,14 +166,10 @@ impl PlayerThread {
                 state
             }
             State::Playing(mut source) => {
-                if self.device.needs_more_chunks() {
-                    if let Some(new_state) = self.queue_chunks(&mut source) {
-                        new_state
-                    } else {
-                        State::Playing(source)
-                    }
+                if let Some(new_state) = self.queue_chunks(&mut source) {
+                    new_state
                 } else {
-                    std::thread::sleep(Duration::from_millis(50));
+                    std::thread::sleep(Duration::from_millis(25));
                     State::Playing(source)
                 }
             }
@@ -178,12 +177,38 @@ impl PlayerThread {
         }
     }
 
-    fn queue_chunks(&self, source: &mut AudioSource) -> Option<State> {
-        while self.device.needs_more_chunks() {
+    fn queue_chunks(&mut self, source: &mut AudioSource) -> Option<State> {
+        if let Some(s) = self.current_sink.as_mut() {
+            s.update()
+        }
+
+        while self
+            .current_sink
+            .as_ref()
+            .map(|s| s.needs_more_chunks())
+            .unwrap_or(true)
+        {
             match source.next_chunk() {
                 Ok(Some(chunk)) => {
-                    if chunk.frames() > 0 {
-                        self.device.queue_chunk(&chunk);
+                    if chunk.frame_count() > 0 {
+                        let sample_rate = chunk.sample_rate();
+                        let channels = chunk.channel_count();
+                        let recreate_sink = match &self.current_sink {
+                            Some(sink) => {
+                                sink.input_channels() != channels
+                                    || sink.input_sample_rate() != sample_rate
+                            }
+                            None => true,
+                        };
+                        if recreate_sink {
+                            log::info!("recreating the audio sink");
+                            if let Some(s) = self.current_sink.as_mut() {
+                                s.flush()
+                            }
+                            self.current_sink =
+                                Some(self.device.create_sink(sample_rate, channels));
+                        }
+                        self.current_sink.as_mut().unwrap().queue(chunk);
                     }
                 }
                 Ok(None) => {

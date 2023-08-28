@@ -17,6 +17,7 @@ use std::sync::mpsc;
 mod audio;
 mod handle;
 pub mod message;
+mod sink;
 mod source;
 mod thread;
 

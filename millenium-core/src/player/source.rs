@@ -17,14 +17,17 @@ use crate::{
     metadata::{Metadata, MetadataConversionError},
 };
 use camino::Utf8PathBuf;
-use std::error::Error as StdError;
+use rubato::SincFixedIn;
 use std::fs::File;
-use symphonia_core::{
-    audio::AudioBufferRef,
+use std::{cmp::Ordering, error::Error as StdError};
+use symphonia::core::{
+    audio::{AudioBuffer, AudioBufferRef, Signal},
     codecs::{Decoder, DecoderOptions},
+    conv::{FromSample, IntoSample},
     formats::FormatReader,
     io::MediaSourceStream,
     probe::Hint,
+    sample::Sample,
 };
 
 #[derive(Debug, thiserror::Error)]
@@ -65,6 +68,196 @@ pub enum AudioSourceError {
     },
 }
 
+#[derive(Clone)]
+pub(super) struct SourceBuffer {
+    sample_rate: u32,
+    channels: Vec<Vec<f32>>,
+}
+impl SourceBuffer {
+    pub(super) fn empty(sample_rate: u32, channels: usize) -> Self {
+        Self {
+            sample_rate,
+            channels: vec![Vec::new(); channels],
+        }
+    }
+
+    /// Clears this buffer.
+    pub(super) fn clear(&mut self) {
+        for channel in &mut self.channels {
+            channel.clear();
+        }
+    }
+
+    /// Extend this buffer with another buffer's data.
+    pub(super) fn extend(&mut self, other: SourceBuffer) {
+        debug_assert!(other.sample_rate() == self.sample_rate);
+        debug_assert!(other.channel_count() == self.channel_count());
+        for (into, from) in self.channels.iter_mut().zip(other.channels.iter()) {
+            into.extend(from.iter());
+        }
+    }
+
+    /// Extend this buffer to the given frame count with silence.
+    pub(super) fn extend_with_silence(&mut self, desired_frames: usize) {
+        debug_assert!(self.frame_count() < desired_frames);
+        for channel in &mut self.channels {
+            channel.resize(desired_frames, 0.0);
+        }
+    }
+
+    /// Drain the first N frames from the buffer and return them as a new buffer.
+    pub(super) fn drain(&mut self, n: usize) -> SourceBuffer {
+        debug_assert!(self.frame_count() >= n);
+        Self {
+            sample_rate: self.sample_rate,
+            channels: self
+                .channels
+                .iter_mut()
+                .map(|channel| channel.drain(0..n).collect())
+                .collect(),
+        }
+    }
+
+    pub(super) fn sample_rate(&self) -> u32 {
+        self.sample_rate
+    }
+
+    pub(super) fn frame_count(&self) -> usize {
+        self.channels.get(0).map(Vec::len).unwrap_or(0)
+    }
+
+    pub(super) fn channel_count(&self) -> usize {
+        self.channels.len()
+    }
+
+    pub(super) fn channel(&self, channel: usize) -> &[f32] {
+        self.channels[channel].as_slice()
+    }
+
+    pub(super) fn resampled(&self, new_sample_rate: u32, resampler: &mut SincFixedIn<f32>) -> Self {
+        use rubato::Resampler as _;
+        Self {
+            sample_rate: new_sample_rate,
+            channels: resampler
+                .process(&self.channels, None)
+                .expect("failed to resample (this is a bug)"),
+        }
+    }
+
+    /// Remix into a different arrangement of channels
+    pub(super) fn remix(self, new_channels: usize) -> Self {
+        match self.channel_count().cmp(&new_channels) {
+            Ordering::Equal => self,
+            Ordering::Less => self.up_mix(new_channels),
+            Ordering::Greater => self.down_mix(new_channels),
+        }
+    }
+
+    fn up_mix(self, new_channels: usize) -> Self {
+        // Mono to stereo
+        if self.channel_count() == 1 && new_channels == 2 {
+            // 10^(dB/20) with dB=-3
+            let gain = 0.707_945_76;
+            let mut attenuated = self.channels.into_iter().next().unwrap();
+            attenuated.iter_mut().for_each(|s| *s *= gain);
+            return Self {
+                sample_rate: self.sample_rate,
+                channels: vec![attenuated.clone(), attenuated],
+            };
+        }
+
+        unimplemented!(
+            "up mixing from {} to {} channels isn't implemented yet",
+            self.channel_count(),
+            new_channels
+        )
+    }
+
+    fn down_mix(mut self, new_channels: usize) -> Self {
+        // Stereo to mono
+        if self.channel_count() == 2 && new_channels == 1 {
+            // 10^(dB/20) with dB=3
+            let gain = 1.412_537_6;
+            let mut left = self.channels.remove(0);
+            let right = self.channels.remove(0);
+            left.iter_mut()
+                .zip(right.iter())
+                .for_each(|(left, right)| *left = (*left * gain + right * gain).clamped());
+            return Self {
+                sample_rate: self.sample_rate,
+                channels: vec![left],
+            };
+        }
+
+        unimplemented!(
+            "down mixing from {} to {} channels isn't implemented yet",
+            self.channel_count(),
+            new_channels
+        )
+    }
+
+    pub(super) fn extend_interleaved_into<Into>(&self, into: &mut Vec<Into>)
+    where
+        Into: Sample,
+        Into: FromSample<f32>,
+    {
+        let frame_count = self.frame_count();
+        let interleaved_len: usize = frame_count * self.channel_count();
+        let start = into.len();
+        into.resize(into.len() + interleaved_len, Into::MID);
+
+        for i in 0..self.channel_count() {
+            let mut into_iter = into
+                .iter_mut()
+                .skip(start + i)
+                .step_by(self.channel_count());
+            for &sample in self.channel(i) {
+                *into_iter.next().unwrap() = Into::from_sample(sample);
+            }
+        }
+    }
+
+    // TODO: Do this conversion in place to reduce allocations
+    fn from_symphonia(from: AudioBufferRef) -> Self {
+        fn convert_and_copy<S>(channel: usize, from: &AudioBuffer<S>, into: &mut Vec<f32>)
+        where
+            S: Sample,
+            S: IntoSample<f32>,
+        {
+            let from_iter = from.chan(channel).iter().map(|&s| s.into_sample());
+            let to_iter = into.as_mut_slice().iter_mut();
+            for (to, from) in to_iter.zip(from_iter) {
+                *to = from;
+            }
+        }
+        macro_rules! convert_and_copy {
+            ($channel:ident, $from:expr => $into:expr, $($format:ident,)+) => {
+                match $from {
+                    $(AudioBufferRef::$format(b) => convert_and_copy($channel, b, $into),)+
+                }
+            };
+        }
+
+        let sample_rate = from.spec().rate;
+        let channel_count = from.spec().channels.count();
+        let frame_count = from.frames();
+        let mut channels = Vec::with_capacity(channel_count);
+        for channel in 0..channel_count {
+            let mut data = vec![0.0; frame_count];
+            convert_and_copy!(
+                channel,
+                &from => &mut data,
+                U8, U16, U24, U32, S8, S16, S24, S32, F32, F64,
+            );
+            channels.push(data);
+        }
+        Self {
+            sample_rate,
+            channels,
+        }
+    }
+}
+
 pub(super) struct AudioSource {
     _location: Location,
     reader: Box<dyn FormatReader>,
@@ -91,11 +284,11 @@ impl AudioSource {
         self.metadata.as_ref()
     }
 
-    pub(super) fn next_chunk(&mut self) -> Result<Option<AudioBufferRef<'_>>, AudioSourceError> {
+    pub(super) fn next_chunk(&mut self) -> Result<Option<SourceBuffer>, AudioSourceError> {
         let packet = match self.reader.next_packet() {
             Ok(packet) => packet,
             // Symphonia's end of stream is an IO error with unexpected EOF
-            Err(symphonia_core::errors::Error::IoError(err))
+            Err(symphonia::core::errors::Error::IoError(err))
                 if err.kind() == std::io::ErrorKind::UnexpectedEof =>
             {
                 return Ok(None)
@@ -104,6 +297,7 @@ impl AudioSource {
         };
         self.decoder
             .decode(&packet)
+            .map(SourceBuffer::from_symphonia)
             .map(Some)
             .map_err(|err| AudioSourceError::FailedToDecodeStream { source: err.into() })
     }

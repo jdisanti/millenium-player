@@ -12,6 +12,7 @@
 // You should have received a copy of the GNU General Public License along with Millenium Player.
 // If not, see <https://www.gnu.org/licenses/>.
 
+use super::sink::{AudioBuffer, BoxAudioBuffer, Sink};
 use cpal::{
     traits::{DeviceTrait, HostTrait, StreamTrait},
     BuildStreamError, Device, DeviceNameError, Host, OutputCallbackInfo, PauseStreamError,
@@ -19,21 +20,15 @@ use cpal::{
     SupportedStreamConfigRange, SupportedStreamConfigsError,
 };
 use std::{
-    any::Any,
-    collections::VecDeque,
+    cmp::Ordering,
     sync::{
         atomic::{self, AtomicBool, AtomicU64},
         mpsc::Receiver,
-        Arc, Mutex,
+        Arc, Mutex, OnceLock,
     },
 };
-use symphonia_core::audio::{
-    AudioBuffer as SymphoniaAudioBuffer, AudioBufferRef as SymphoniaAudioBufferRef, Signal as _,
-};
-use symphonia_core::sample::Sample as SymphoniaSample;
 
-const PREFERRED_SAMPLE_RATE: SampleRate = SampleRate(44100);
-const DESIRED_QUEUE_LENGTH: u64 = 100 * 44100 / 1000; // 100ms
+const PREFERRED_SAMPLE_RATES: &[u32] = &[48000, 44100, 88200, 96000];
 
 #[derive(Debug, thiserror::Error)]
 pub enum AudioDeviceError {
@@ -83,23 +78,17 @@ pub enum AudioDeviceError {
 
 /// Represents an output device that can play audio.
 pub(super) trait AudioDevice {
-    /// True if more audio data needs to be queued.
-    fn needs_more_chunks(&self) -> bool;
-
-    /// Queues another chunk of audio data.
-    fn queue_chunk(&self, chunk: &SymphoniaAudioBufferRef<'_>);
+    /// Create a sink for the given sample rate and number of channels.
+    fn create_sink(&self, input_sample_rate: u32, input_channels: usize) -> Sink;
 
     /// Returns the sample rate that playback occurs at.
-    fn playback_sample_rate(&self) -> u64;
+    fn playback_sample_rate(&self) -> usize;
 
-    /// Returns the amount of audio data queued in terms of time.
-    fn queued_samples(&self) -> u64;
-
-    /// Returns the amount of audio data consumed in number of samples.
-    fn samples_consumed(&self) -> u64;
+    /// Returns the amount of audio data consumed in number of frames.
+    fn frames_consumed(&self) -> u64;
 
     /// Resets the amount of consumed audio data.
-    fn reset_samples_consumed(&self);
+    fn reset_frames_consumed(&self);
 
     /// Stops playback and clears the queue.
     fn stop(&self) -> Result<(), AudioDeviceError>;
@@ -114,79 +103,10 @@ pub(super) trait AudioDevice {
     fn healthcheck(&self) -> Result<(), AudioDeviceError>;
 }
 
-struct AudioBuffer<S> {
-    data: Vec<S>,
-    samples: u64,
-    next: usize,
-}
-
-impl<S> AudioBuffer<S> {
-    fn new(data: Vec<S>, samples: u64) -> Self {
-        debug_assert!(!data.is_empty());
-        Self {
-            data,
-            samples,
-            next: 0,
-        }
-    }
-}
-impl<S> AudioBuffer<S>
-where
-    S: Sample + SymphoniaSample,
-{
-    fn from(channels: u32, symphonia_buf: SymphoniaAudioBuffer<S>) -> Self {
-        let symphonia_channels = symphonia_buf.spec().channels.count();
-        debug_assert!(symphonia_channels > 0);
-
-        let n = symphonia_buf.frames();
-        debug_assert!(channels > 0 && n > 0);
-
-        let mut buffer = vec![S::EQUILIBRIUM; n * channels as usize];
-        for channel in 0..channels as usize {
-            let chan = symphonia_buf.chan(usize::min(channel, symphonia_channels - 1));
-            let mut buf_iter = buffer.iter_mut().skip(channel).step_by(channels as usize);
-            for sample in chan {
-                *buf_iter.next().unwrap() = *sample;
-            }
-        }
-        Self::new(buffer, n as u64)
-    }
-
-    #[inline]
-    fn next(&mut self) -> Option<S> {
-        let sample = self.data.get(self.next).copied();
-        self.next = self.next.saturating_add(1);
-        sample
-    }
-}
-
-struct BoxAudioBuffer {
-    inner: Box<dyn Any + Send>,
-    samples: u64,
-}
-
-impl BoxAudioBuffer {
-    fn new<S: Sample + SymphoniaSample + Send + 'static>(buffer: AudioBuffer<S>) -> Self {
-        Self {
-            samples: buffer.samples,
-            inner: Box::new(buffer),
-        }
-    }
-
-    #[inline]
-    fn get_mut<S: Sample + SymphoniaSample + 'static>(&mut self) -> Option<&mut AudioBuffer<S>> {
-        self.inner.downcast_mut::<AudioBuffer<S>>()
-    }
-    #[inline]
-    fn expect_mut<S: Sample + SymphoniaSample + 'static>(&mut self) -> &mut AudioBuffer<S> {
-        self.get_mut().expect("failed to downcast audio buffer")
-    }
-}
-
 pub(super) struct NullAudioDevice {
     config: SupportedStreamConfig,
-    buffers: Arc<Mutex<VecDeque<BoxAudioBuffer>>>,
-    samples_consumed: AtomicU64,
+    output_buffer: Arc<Mutex<BoxAudioBuffer>>,
+    frames_consumed: AtomicU64,
 }
 
 impl NullAudioDevice {
@@ -198,38 +118,36 @@ impl NullAudioDevice {
                 cpal::SupportedBufferSize::Unknown,
                 SampleFormat::F32,
             ),
-            buffers: Arc::new(Mutex::new(VecDeque::new())),
-            samples_consumed: AtomicU64::new(0),
+            output_buffer: Arc::new(Mutex::new(BoxAudioBuffer::new(
+                SampleFormat::F32,
+                AudioBuffer::new(Vec::<f32>::new()),
+            ))),
+            frames_consumed: AtomicU64::new(0),
         }
     }
 }
 
 impl AudioDevice for NullAudioDevice {
-    fn needs_more_chunks(&self) -> bool {
-        self.buffers.lock().unwrap().len() < 3
+    fn create_sink(&self, input_sample_rate: u32, input_channels: usize) -> Sink {
+        Sink::new(
+            input_sample_rate,
+            input_channels,
+            self.config.sample_rate().0,
+            self.config.channels() as usize,
+            self.output_buffer.clone(),
+        )
     }
 
-    fn queue_chunk(&self, chunk: &SymphoniaAudioBufferRef<'_>) {
-        let converted = convert_audio(&self.config, chunk);
-        let mut buffers = self.buffers.lock().unwrap();
-        buffers.push_back(converted);
+    fn playback_sample_rate(&self) -> usize {
+        44100
     }
 
-    fn playback_sample_rate(&self) -> u64 {
-        PREFERRED_SAMPLE_RATE.0 as u64
+    fn frames_consumed(&self) -> u64 {
+        self.frames_consumed.load(atomic::Ordering::SeqCst)
     }
 
-    fn queued_samples(&self) -> u64 {
-        let buffers = self.buffers.lock().unwrap();
-        buffers.iter().map(|buf| buf.samples).sum()
-    }
-
-    fn samples_consumed(&self) -> u64 {
-        self.samples_consumed.load(atomic::Ordering::SeqCst)
-    }
-
-    fn reset_samples_consumed(&self) {
-        self.samples_consumed.store(0, atomic::Ordering::SeqCst);
+    fn reset_frames_consumed(&self) {
+        self.frames_consumed.store(0, atomic::Ordering::SeqCst);
     }
 
     fn play(&self) -> Result<(), AudioDeviceError> {
@@ -253,8 +171,8 @@ pub(super) struct CpalAudioDevice {
     _device: Device,
     config: SupportedStreamConfig,
     stream: Stream,
-    buffers: Arc<Mutex<VecDeque<BoxAudioBuffer>>>,
-    samples_consumed: Arc<AtomicU64>,
+    output_buffer: Arc<Mutex<BoxAudioBuffer>>,
+    frames_consumed: Arc<AtomicU64>,
     playing: AtomicBool,
     error_receiver: Receiver<AudioDeviceError>,
 }
@@ -263,8 +181,8 @@ macro_rules! create_stream {
     (
         selected_format = $selected_format:expr,
         config = $cfg:ident,
-        samples_consumed = $samples_consumed:ident,
-        buffers = $buf:ident,
+        frames_consumed = $frames_consumed:ident,
+        output_buffer = $buf:ident,
         device = $device:ident,
         stream_writer = $stream_writer:ident,
         error_callback = $error_callback:ident,
@@ -276,8 +194,7 @@ macro_rules! create_stream {
             $(
                 cpal::SampleFormat::$uf => $device.build_output_stream(
                     $cfg,
-                    $stream_writer::<$lf>($samples_consumed.clone(),
-                    $buf.clone()),
+                    $stream_writer::<$lf>($cfg.channels as usize, $frames_consumed.clone(), $buf.clone()),
                     $error_callback,
                     None
                 ),
@@ -305,18 +222,25 @@ impl CpalAudioDevice {
             config.sample_format()
         );
 
-        fn stream_writer<S: Sample + SymphoniaSample + 'static>(
-            samples_consumed: Arc<AtomicU64>,
-            buffers: Arc<Mutex<VecDeque<BoxAudioBuffer>>>,
+        fn stream_writer<S: Sample + 'static>(
+            channels: usize,
+            frames_consumed: Arc<AtomicU64>,
+            output_buffer: Arc<Mutex<BoxAudioBuffer>>,
         ) -> impl FnMut(&mut [S], &OutputCallbackInfo) + Send + 'static {
             move |data: &mut [S], info| {
-                let mut buffers = buffers.lock().unwrap();
-                write_audio_data(samples_consumed.clone(), &mut buffers, data, info);
+                let mut output_buffer = output_buffer.lock().unwrap();
+                write_audio_data(
+                    channels,
+                    frames_consumed.clone(),
+                    &mut output_buffer,
+                    data,
+                    info,
+                );
             }
         }
 
-        let samples_consumed = Arc::new(AtomicU64::new(0));
-        let buffers = Arc::new(Mutex::new(VecDeque::new()));
+        let frames_consumed = Arc::new(AtomicU64::new(0));
+        let output_buffer = Arc::new(Mutex::new(BoxAudioBuffer::empty(config.sample_format())));
         let (stream, error_receiver) = {
             let cfg = &config.config();
             let (err_tx, err_rx) = std::sync::mpsc::channel();
@@ -329,8 +253,8 @@ impl CpalAudioDevice {
             let stream = create_stream!(
                 selected_format = config.sample_format(),
                 config = cfg,
-                samples_consumed = samples_consumed,
-                buffers = buffers,
+                frames_consumed = frames_consumed,
+                output_buffer = output_buffer,
                 device = device,
                 stream_writer = stream_writer,
                 error_callback = error_callback,
@@ -353,8 +277,8 @@ impl CpalAudioDevice {
             _device: device,
             config,
             stream,
-            buffers,
-            samples_consumed,
+            output_buffer,
+            frames_consumed,
             playing: AtomicBool::new(false),
             error_receiver,
         })
@@ -362,35 +286,30 @@ impl CpalAudioDevice {
 }
 
 impl AudioDevice for CpalAudioDevice {
-    fn needs_more_chunks(&self) -> bool {
-        self.queued_samples() < DESIRED_QUEUE_LENGTH
+    fn create_sink(&self, input_sample_rate: u32, input_channels: usize) -> Sink {
+        Sink::new(
+            input_sample_rate,
+            input_channels,
+            self.config.sample_rate().0,
+            self.config.channels() as usize,
+            self.output_buffer.clone(),
+        )
     }
 
-    fn queue_chunk(&self, chunk: &SymphoniaAudioBufferRef<'_>) {
-        let converted = convert_audio(&self.config, chunk);
-        let mut buffers = self.buffers.lock().unwrap();
-        buffers.push_back(converted);
+    fn playback_sample_rate(&self) -> usize {
+        self.config.sample_rate().0 as usize
     }
 
-    fn queued_samples(&self) -> u64 {
-        let buffers = self.buffers.lock().unwrap();
-        buffers.iter().map(|buf| buf.samples).sum()
+    fn frames_consumed(&self) -> u64 {
+        self.frames_consumed.load(atomic::Ordering::SeqCst)
     }
 
-    fn playback_sample_rate(&self) -> u64 {
-        self.config.sample_rate().0 as u64
-    }
-
-    fn samples_consumed(&self) -> u64 {
-        self.samples_consumed.load(atomic::Ordering::SeqCst)
-    }
-
-    fn reset_samples_consumed(&self) {
-        self.samples_consumed.store(0, atomic::Ordering::SeqCst)
+    fn reset_frames_consumed(&self) {
+        self.frames_consumed.store(0, atomic::Ordering::SeqCst)
     }
 
     fn stop(&self) -> Result<(), AudioDeviceError> {
-        self.buffers.lock().unwrap().clear();
+        self.output_buffer.lock().unwrap().clear();
         self.pause()
     }
 
@@ -415,61 +334,37 @@ impl AudioDevice for CpalAudioDevice {
 }
 
 // TODO unit test
-fn write_audio_data<S: Sample + SymphoniaSample + 'static>(
-    samples_consumed: Arc<AtomicU64>,
-    buffers: &mut VecDeque<BoxAudioBuffer>,
+fn write_audio_data<S>(
+    channels: usize,
+    frames_consumed: Arc<AtomicU64>,
+    output_buffer: &mut BoxAudioBuffer,
     data: &mut [S],
     _: &OutputCallbackInfo,
-) {
-    for sample in data.iter_mut() {
-        let next = loop {
-            if let Some(buffer) = buffers.front_mut() {
-                let buffer = buffer.expect_mut::<S>();
-                if let Some(value) = buffer.next() {
-                    break Some(value);
-                } else {
-                    buffers.pop_front();
-                }
-            } else {
-                break None;
-            }
-        };
-        *sample = next.unwrap_or(S::EQUILIBRIUM);
+) where
+    S: Sample + 'static,
+{
+    let output_buffer = output_buffer.expect_mut::<S>();
+    frames_consumed.fetch_add(
+        output_buffer.len() as u64 / channels as u64,
+        atomic::Ordering::SeqCst,
+    );
+    let output_buffer_len = output_buffer.len();
+    let source = output_buffer.drain(0..usize::min(output_buffer.len(), data.len()));
+    for (from, into) in source.zip(data.iter_mut()) {
+        *into = from;
     }
-    samples_consumed.fetch_add(data.len() as u64, atomic::Ordering::SeqCst);
-}
-
-macro_rules! convert_format {
-    ($channels:expr, $into:expr, $from:ident, supported_formats = [$($uf:ident => $lf:ident,)+]) => {
-        match $into {
-            $(cpal::SampleFormat::$uf => {
-                let mut buf = $from.make_equivalent::<$lf>();
-                $from.convert(&mut buf);
-                BoxAudioBuffer::new(AudioBuffer::from($channels, buf))
-            },)+
-            _ => unreachable!("unsupported sample format: {:?} (this is a bug)", $into),
-        }
-    };
-}
-
-fn convert_audio(
-    into_format: &SupportedStreamConfig,
-    from: &SymphoniaAudioBufferRef<'_>,
-) -> BoxAudioBuffer {
-    if into_format.sample_rate().0 == from.spec().rate {
-        convert_format!(into_format.channels().into(), into_format.sample_format(), from, supported_formats = [
-            F32 => f32,
-            I16 => i16,
-            U16 => u16,
-            I32 => i32,
-            U32 => u32,
-            F64 => f64,
-            I8 => i8,
-            U8 => u8,
-        ])
-    } else {
-        // TODO: sample rate conversion
-        unimplemented!("sample rate conversion")
+    let mut filled_in_silence = false;
+    for into in data.iter_mut().skip(output_buffer_len) {
+        *into = S::EQUILIBRIUM;
+        filled_in_silence = true;
+    }
+    if filled_in_silence {
+        static ONCE: OnceLock<()> = OnceLock::new();
+        ONCE.get_or_init(|| {
+            log::warn!(
+                "filled output device with silence (this is either a performance issue or a bug)"
+            );
+        });
     }
 }
 
@@ -496,77 +391,145 @@ fn select_device(host: &Host, preferred: Option<&str>) -> Result<Device, AudioDe
 fn select_config(
     supported_output_configs: impl Iterator<Item = SupportedStreamConfigRange>,
 ) -> Result<Option<SupportedStreamConfig>, AudioDeviceError> {
-    let mut current_selection = None;
-    for config in supported_output_configs {
+    let mut supported_output_configs = supported_output_configs.collect::<Vec<_>>();
+    if supported_output_configs.is_empty() {
+        return Ok(None);
+    }
+
+    supported_output_configs.sort_by(|a, b| {
+        by_preferred_channels(a, b)
+            .then_with(|| by_preferred_sample_rate(a, b))
+            .then_with(|| by_preferred_sample_format(a, b))
+    });
+    log::info!("available audio output configurations in priority order:");
+    for config in &supported_output_configs {
         log::info!(
-            "available output configuration: channels={}, sample_rate={}-{}, sample_format={:?}",
+            "  channels={}, sample_rate={}-{}, sample_format={:?}",
             config.channels(),
             config.min_sample_rate().0,
             config.max_sample_rate().0,
             config.sample_format()
         );
-        if config.channels() == 2
-            && config.min_sample_rate() <= PREFERRED_SAMPLE_RATE
-            && config.max_sample_rate() >= PREFERRED_SAMPLE_RATE
-        {
-            if let Some(original) = current_selection.take() {
-                current_selection = Some(preferred_sample_format(original, config));
-            } else {
-                current_selection = Some(config);
-            }
-        }
     }
-    if let Some(selection) = &current_selection {
-        if let cpal::SampleFormat::I64 | cpal::SampleFormat::U64 = selection.sample_format() {
-            return Err(AudioDeviceError::FailedToSelectConfig);
-        }
+    let selected = supported_output_configs.into_iter().next().unwrap();
+    let selected = select_sample_rate(selected);
+    if let cpal::SampleFormat::I64 | cpal::SampleFormat::U64 = selected.sample_format() {
+        Err(AudioDeviceError::FailedToSelectConfig)
+    } else {
+        Ok(Some(selected))
     }
-    Ok(current_selection.map(|selection| selection.with_sample_rate(PREFERRED_SAMPLE_RATE)))
 }
 
-fn preferred_sample_format(
-    left: SupportedStreamConfigRange,
-    right: SupportedStreamConfigRange,
-) -> SupportedStreamConfigRange {
-    use cpal::SampleFormat as SF;
-    match (left.sample_format(), right.sample_format()) {
-        // Preferred
-        (SF::F32, _) => left,
-        (_, SF::F32) => right,
-        (SF::I16, _) => left,
-        (_, SF::I16) => right,
-        (SF::U16, _) => left,
-        (_, SF::U16) => right,
-        // These take more memory, but still retain quality
-        (SF::I32, _) => left,
-        (_, SF::I32) => right,
-        (SF::U32, _) => left,
-        (_, SF::U32) => right,
-        (SF::F64, _) => left,
-        (_, SF::F64) => right,
-        // These lose quality
-        (SF::I8, _) => left,
-        (_, SF::I8) => right,
-        (SF::U8, _) => left,
-        (_, SF::U8) => right,
-        // These aren't supported by Symphonia, so select against them
-        (SF::I64, _) => right,
-        (_, SF::I64) => left,
-        (SF::U64, _) => right,
-        (_, SF::U64) => left,
-        // SampleFormat is non-exhaustive
-        _ => left,
+fn config_range_supports_sample_rate(range: &SupportedStreamConfigRange, sample_rate: u32) -> bool {
+    range.min_sample_rate().0 <= sample_rate && range.max_sample_rate().0 >= sample_rate
+}
+
+fn select_sample_rate(range: SupportedStreamConfigRange) -> SupportedStreamConfig {
+    for &hz in PREFERRED_SAMPLE_RATES {
+        if config_range_supports_sample_rate(&range, hz) {
+            return range.with_sample_rate(SampleRate(hz));
+        }
     }
+    range.with_max_sample_rate()
+}
+
+fn by_preferred_channels(
+    left: &SupportedStreamConfigRange,
+    right: &SupportedStreamConfigRange,
+) -> Ordering {
+    // Prefer two channels. Otherwise, maximize the number of channels.
+    if left.channels() == right.channels() {
+        Ordering::Equal
+    } else if left.channels() == 2 {
+        Ordering::Less
+    } else if right.channels() == 2 {
+        Ordering::Greater
+    } else {
+        right.channels().cmp(&left.channels())
+    }
+}
+
+fn by_preferred_sample_rate(
+    left: &SupportedStreamConfigRange,
+    right: &SupportedStreamConfigRange,
+) -> Ordering {
+    // Sort preferred sample rates to the front
+    for &hz in PREFERRED_SAMPLE_RATES {
+        if config_range_supports_sample_rate(left, hz) {
+            return Ordering::Less;
+        }
+        if config_range_supports_sample_rate(right, hz) {
+            return Ordering::Greater;
+        }
+    }
+    // Otherwise, choose the larger sample rate
+    right.max_sample_rate().0.cmp(&left.max_sample_rate().0)
+}
+
+fn by_preferred_sample_format(
+    left: &SupportedStreamConfigRange,
+    right: &SupportedStreamConfigRange,
+) -> Ordering {
+    use cpal::SampleFormat as SF;
+    for &format in &[
+        // Preferred
+        SF::F32,
+        SF::I16,
+        SF::U16,
+        // These take more memory, but still retain quality
+        SF::I32,
+        SF::U32,
+        SF::F64,
+        // These lose quality
+        SF::I8,
+        SF::U8,
+        // These aren't supported by Symphonia, so select against them
+        SF::I64,
+        SF::U64,
+    ] {
+        if left.sample_format() == format {
+            return Ordering::Less;
+        }
+        if right.sample_format() == format {
+            return Ordering::Greater;
+        }
+    }
+    Ordering::Greater
 }
 
 #[cfg(test)]
 mod tests {
-    use std::borrow::Cow;
-
-    use cpal::{SampleFormat, SupportedBufferSize};
-    use symphonia_core::audio::{Channels, SignalSpec};
-
     use super::*;
+    use cpal::{SampleFormat, SupportedBufferSize};
+
+    #[test]
+    fn preferred_channels() {
+        fn cfg(channels: u16) -> SupportedStreamConfigRange {
+            SupportedStreamConfigRange::new(
+                channels,
+                SampleRate(44100),
+                SampleRate(44100),
+                SupportedBufferSize::Unknown,
+                SampleFormat::F32,
+            )
+        }
+
+        let mut configs = [1, 2, 3, 4, 5, 6, 7, 8]
+            .into_iter()
+            .map(cfg)
+            .collect::<Vec<_>>();
+
+        fastrand::shuffle(&mut configs);
+        configs.sort_by(by_preferred_channels);
+
+        assert_eq!(
+            vec![2, 8, 7, 6, 5, 4, 3, 1],
+            configs
+                .into_iter()
+                .map(|c| c.channels())
+                .collect::<Vec<_>>()
+        );
+    }
 
     #[test]
     fn preferred_formats() {
@@ -581,34 +544,67 @@ mod tests {
         }
 
         use SampleFormat::*;
-        for other in &[I16, U16, I32, U32, F64, I8, U8, I64, U64] {
-            assert_eq!(cfg(F32), preferred_sample_format(cfg(F32), cfg(*other)));
-            assert_eq!(cfg(F32), preferred_sample_format(cfg(*other), cfg(F32)));
+        let mut configs = [I16, U16, I32, U32, F64, I8, U8, I64, U64, F32]
+            .into_iter()
+            .map(cfg)
+            .collect::<Vec<_>>();
+
+        fastrand::shuffle(&mut configs);
+        configs.sort_by(by_preferred_sample_format);
+
+        assert_eq!(
+            vec![F32, I16, U16, I32, U32, F64, I8, U8, I64, U64],
+            configs
+                .into_iter()
+                .map(|c| c.sample_format())
+                .collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn preferred_sample_rates() {
+        fn cfg(min_sample_rate: u32, max_sample_rate: u32) -> SupportedStreamConfigRange {
+            SupportedStreamConfigRange::new(
+                1,
+                SampleRate(min_sample_rate),
+                SampleRate(max_sample_rate),
+                SupportedBufferSize::Unknown,
+                SampleFormat::F32,
+            )
         }
-        for other in &[U16, I32, U32, F64, I8, U8, I64, U64] {
-            assert_eq!(cfg(I16), preferred_sample_format(cfg(I16), cfg(*other)));
-            assert_eq!(cfg(I16), preferred_sample_format(cfg(*other), cfg(I16)));
+        fn shuffled_group(group: &[(u32, u32)]) -> Vec<SupportedStreamConfigRange> {
+            let mut configs = group
+                .iter()
+                .map(|(min, max)| cfg(*min, *max))
+                .collect::<Vec<_>>();
+            fastrand::shuffle(&mut configs);
+            configs
         }
-        for other in &[I32, U32, F64, I8, U8, I64, U64] {
-            assert_eq!(cfg(U16), preferred_sample_format(cfg(U16), cfg(*other)));
-            assert_eq!(cfg(U16), preferred_sample_format(cfg(*other), cfg(U16)));
+        #[track_caller]
+        fn test(values: &[(u32, u32)], expected: &[(u32, u32)]) {
+            let mut configs = shuffled_group(values);
+            configs.sort_by(by_preferred_sample_rate);
+            assert_eq!(
+                expected.to_vec(),
+                configs
+                    .into_iter()
+                    .map(|c| (c.min_sample_rate().0, c.max_sample_rate().0))
+                    .collect::<Vec<_>>()
+            );
         }
-        for other in &[U32, F64, I8, U8, I64, U64] {
-            assert_eq!(cfg(I32), preferred_sample_format(cfg(I32), cfg(*other)));
-            assert_eq!(cfg(I32), preferred_sample_format(cfg(*other), cfg(I32)));
-        }
-        for other in &[F64, I8, U8, I64, U64] {
-            assert_eq!(cfg(U32), preferred_sample_format(cfg(U32), cfg(*other)));
-            assert_eq!(cfg(U32), preferred_sample_format(cfg(*other), cfg(U32)));
-        }
-        for other in &[F64, I8, U8, I64, U64] {
-            assert_eq!(cfg(F64), preferred_sample_format(cfg(F64), cfg(*other)));
-            assert_eq!(cfg(F64), preferred_sample_format(cfg(*other), cfg(F64)));
-        }
-        for other in &[U8, I64, U64] {
-            assert_eq!(cfg(I8), preferred_sample_format(cfg(I8), cfg(*other)));
-            assert_eq!(cfg(I8), preferred_sample_format(cfg(*other), cfg(I8)));
-        }
+
+        test(
+            &[(8000, 16000), (96000, 96000)],
+            &[(96000, 96000), (8000, 16000)],
+        );
+        test(
+            &[(8000, 8000), (16000, 16000)],
+            &[(16000, 16000), (8000, 8000)],
+        );
+        test(
+            &[(8000, 8000), (96000, 96000), (44100, 44100), (44100, 48000)],
+            &[(44100, 48000), (44100, 44100), (96000, 96000), (8000, 8000)],
+        );
     }
 
     #[test]
@@ -629,133 +625,20 @@ mod tests {
 
         assert_eq!(
             Some(cfg(2, 44100, F32).with_sample_rate(SampleRate(44100))),
-            select_config([cfg(2, 44100, F32)].into_iter()).unwrap()
+            select_config([cfg(5, 44100, F32), cfg(2, 44100, F32), cfg(1, 44100, F32)].into_iter())
+                .unwrap()
         );
 
         assert_eq!(
-            Some(cfg(2, 44100, F32).with_sample_rate(SampleRate(44100))),
-            select_config([cfg(2, 48000, F32), cfg(2, 44100, F32)].into_iter(),).unwrap()
+            Some(cfg(2, 48000, F32).with_sample_rate(SampleRate(48000))),
+            select_config([cfg(2, 8000, F32), cfg(2, 96000, F32), cfg(2, 48000, F32)].into_iter())
+                .unwrap()
         );
 
         assert_eq!(
-            Some(cfg(2, 44100, I16).with_sample_rate(SampleRate(44100))),
-            select_config([cfg(2, 48000, F32), cfg(2, 44100, I16)].into_iter(),).unwrap()
+            Some(cfg(2, 48000, I16).with_sample_rate(SampleRate(48000))),
+            select_config([cfg(2, 48000, I8), cfg(2, 48000, U32), cfg(2, 48000, I16)].into_iter())
+                .unwrap()
         );
-
-        assert_eq!(
-            None,
-            select_config([cfg(2, 48000, F32), cfg(2, 96000, I16)].into_iter(),).unwrap()
-        );
-    }
-
-    #[test]
-    fn convert_sample_format_f32_to_i16_mono() {
-        let into = SupportedStreamConfig::new(
-            1,
-            SampleRate(44100),
-            SupportedBufferSize::Unknown,
-            SampleFormat::I16,
-        );
-
-        let mut from = SymphoniaAudioBuffer::new(20, SignalSpec::new(44100, Channels::FRONT_LEFT));
-        from.render(None, |planes, n| {
-            for plane in planes.planes() {
-                plane[n] = 0.5;
-            }
-            Ok(())
-        })
-        .unwrap();
-
-        let mut out = convert_audio(&into, &SymphoniaAudioBufferRef::F32(Cow::Owned(from)));
-        let out = out.expect_mut::<i16>();
-        assert!(out
-            .data
-            .iter()
-            .all(|&s| dbg!(s) == dbg!((0.5 * i16::MAX as f32) as i16 + 1)));
-        assert_eq!(20, out.data.len());
-    }
-
-    #[test]
-    fn convert_sample_format_i16_to_f32_stereo() {
-        let into = SupportedStreamConfig::new(
-            2,
-            SampleRate(44100),
-            SupportedBufferSize::Unknown,
-            SampleFormat::F32,
-        );
-
-        let mut from: SymphoniaAudioBuffer<i16> = SymphoniaAudioBuffer::new(
-            20,
-            SignalSpec::new(44100, Channels::FRONT_LEFT | Channels::FRONT_RIGHT),
-        );
-        from.render(None, |planes, n| {
-            for (i, plane) in planes.planes().iter_mut().enumerate() {
-                plane[n] = ((0.2 * (i + 1) as f32) * i16::MAX as f32) as i16;
-            }
-            Ok(())
-        })
-        .unwrap();
-
-        let mut out = convert_audio(&into, &SymphoniaAudioBufferRef::S16(Cow::Owned(from)));
-        let out = out.expect_mut::<f32>();
-        for chunk in out.data.chunks_exact(2) {
-            assert_eq!((chunk[0] * 10.0).round() as i32, 2);
-            assert_eq!((chunk[1] * 10.0).round() as i32, 4);
-        }
-        assert_eq!(40, out.data.len());
-    }
-
-    #[test]
-    fn convert_sample_format_i16_to_f32_stereo_to_mono() {
-        let into = SupportedStreamConfig::new(
-            1,
-            SampleRate(44100),
-            SupportedBufferSize::Unknown,
-            SampleFormat::F32,
-        );
-
-        let mut from: SymphoniaAudioBuffer<i16> = SymphoniaAudioBuffer::new(
-            20,
-            SignalSpec::new(44100, Channels::FRONT_LEFT | Channels::FRONT_RIGHT),
-        );
-        from.render(None, |planes, n| {
-            for (i, plane) in planes.planes().iter_mut().enumerate() {
-                plane[n] = ((0.2 * (i + 1) as f32) * i16::MAX as f32) as i16;
-            }
-            Ok(())
-        })
-        .unwrap();
-
-        let mut out = convert_audio(&into, &SymphoniaAudioBufferRef::S16(Cow::Owned(from)));
-        let out = out.expect_mut::<f32>();
-        assert!(out.data.iter().all(|s| (s * 10.0).round() as i32 == 2));
-        assert_eq!(20, out.data.len());
-    }
-
-    #[test]
-    fn convert_sample_format_i16_to_i32_mono_to_stereo() {
-        let into = SupportedStreamConfig::new(
-            2,
-            SampleRate(44100),
-            SupportedBufferSize::Unknown,
-            SampleFormat::I32,
-        );
-
-        let mut from: SymphoniaAudioBuffer<i16> = SymphoniaAudioBuffer::new(
-            20,
-            SignalSpec::new(44100, Channels::FRONT_LEFT | Channels::FRONT_RIGHT),
-        );
-        from.render(None, |planes, n| {
-            for plane in planes.planes() {
-                plane[n] = 1;
-            }
-            Ok(())
-        })
-        .unwrap();
-
-        let mut out = convert_audio(&into, &SymphoniaAudioBufferRef::S16(Cow::Owned(from)));
-        let out = out.expect_mut::<i32>();
-        assert!(out.data.iter().all(|&s| dbg!(s) == 65536));
-        assert_eq!(40, out.data.len());
     }
 }
