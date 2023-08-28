@@ -166,22 +166,21 @@ impl PlayerThread {
                 state
             }
             State::Playing(mut source) => {
-                if let Some(new_state) = self.queue_chunks(&mut source) {
+                let next_state = if let Some(new_state) = self.queue_chunks(&mut source) {
                     new_state
                 } else {
-                    std::thread::sleep(Duration::from_millis(25));
                     State::Playing(source)
+                };
+                if let Some(sink) = self.current_sink.as_mut() {
+                    sink.send_audio_with_timeout(Duration::from_millis(50));
                 }
+                next_state
             }
             state => state,
         }
     }
 
     fn queue_chunks(&mut self, source: &mut AudioSource) -> Option<State> {
-        if let Some(s) = self.current_sink.as_mut() {
-            s.update()
-        }
-
         while self
             .current_sink
             .as_ref()
