@@ -15,10 +15,14 @@ release: build-assets
 watch:
     cd millenium-assets; npm run watch
 
-test: build-assets
+rust-check-fmt:
     cargo fmt --check
+rust-test:
     cargo test --all-features
+rust-clippy:
     cargo clippy --all-features
+
+test: build-assets rust-check-fmt rust-test rust-clippy
 
 run:
     cargo run --bin millenium-desktop -- simple
