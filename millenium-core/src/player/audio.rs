@@ -30,7 +30,7 @@ use std::{
 };
 
 const PREFERRED_SAMPLE_RATES: &[u32] = &[48000, 44100, 88200, 96000];
-const DESIRED_BUFFER_LENGTH: Duration = Duration::from_millis(50);
+const DESIRED_BUFFER_LENGTH: Duration = Duration::from_millis(100);
 
 #[derive(Debug, thiserror::Error)]
 pub enum AudioDeviceError {
