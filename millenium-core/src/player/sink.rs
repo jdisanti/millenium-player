@@ -19,7 +19,7 @@ use std::{
     any::Any,
     mem,
     ops::RangeBounds,
-    sync::{Arc, Mutex},
+    sync::{mpsc::Receiver, Arc, Mutex},
     time::Duration,
 };
 
@@ -32,10 +32,10 @@ pub(super) struct Sink {
     output_sample_rate: u32,
     output_channels: usize,
     desired_input_frames: usize,
-    desired_output_frames: usize,
     resampler: Option<SincFixedIn<f32>>,
     input_buffer: Arc<Mutex<SourceBuffer>>,
     output_buffer: Arc<Mutex<BoxAudioBuffer>>,
+    output_needed_signal: Arc<Receiver<()>>,
 }
 
 impl Sink {
@@ -45,6 +45,7 @@ impl Sink {
         output_sample_rate: u32,
         output_channels: usize,
         output_buffer: Arc<Mutex<BoxAudioBuffer>>,
+        output_needed_signal: Arc<Receiver<()>>,
     ) -> Self {
         let resampler = if input_sample_rate != output_sample_rate {
             Some(
@@ -75,14 +76,13 @@ impl Sink {
             output_channels,
             desired_input_frames: (DESIRED_QUEUE_LENGTH.as_secs_f32() * input_sample_rate as f32)
                 as usize,
-            desired_output_frames: (DESIRED_QUEUE_LENGTH.as_secs_f32() * output_sample_rate as f32)
-                as usize,
             resampler,
             input_buffer: Arc::new(Mutex::new(SourceBuffer::empty(
                 input_sample_rate,
                 input_channels,
             ))),
             output_buffer,
+            output_needed_signal,
         }
     }
 
@@ -112,21 +112,23 @@ impl Sink {
         }
     }
 
-    pub(crate) fn update(&mut self) {
-        let mut input_buffer = self.input_buffer.lock().unwrap();
-        let mut out_needs_more =
-            self.output_buffer.lock().unwrap().len() < self.desired_output_frames;
-        while input_buffer.frame_count() >= CHUNK_SIZE_FRAMES && out_needs_more {
-            let chunk = Self::convert_chunk(
-                self.resampler.as_mut(),
-                self.output_sample_rate,
-                self.output_channels,
-                input_buffer.drain(CHUNK_SIZE_FRAMES),
-            );
+    /// This is a blocking call that sends data to the audio device as needed.
+    pub(crate) fn send_audio_with_timeout(&mut self, timeout: Duration) {
+        if self.output_needed_signal.recv_timeout(timeout).is_ok() {
+            let mut input_buffer = self.input_buffer.lock().unwrap();
+            if input_buffer.frame_count() >= CHUNK_SIZE_FRAMES {
+                let chunk = Self::convert_chunk(
+                    self.resampler.as_mut(),
+                    self.output_sample_rate,
+                    self.output_channels,
+                    input_buffer.drain(CHUNK_SIZE_FRAMES),
+                );
 
-            let mut output_buffer = self.output_buffer.lock().unwrap();
-            output_buffer.extend(&chunk);
-            out_needs_more = output_buffer.len() < self.desired_output_frames;
+                let mut output_buffer = self.output_buffer.lock().unwrap();
+                output_buffer.extend(&chunk);
+            } else {
+                log::warn!("not decoding audio fast enough to satisfy output device",);
+            }
         }
     }
 
@@ -218,21 +220,6 @@ impl BoxAudioBuffer {
         }
     }
 
-    pub(super) fn len(&self) -> usize {
-        match self.format {
-            SampleFormat::F32 => self.expect::<f32>().len(),
-            SampleFormat::F64 => self.expect::<f64>().len(),
-            SampleFormat::I16 => self.expect::<i16>().len(),
-            SampleFormat::I32 => self.expect::<i32>().len(),
-            SampleFormat::I8 => self.expect::<i8>().len(),
-            SampleFormat::U16 => self.expect::<u16>().len(),
-            SampleFormat::U32 => self.expect::<u32>().len(),
-            SampleFormat::U8 => self.expect::<u8>().len(),
-            SampleFormat::I64 | SampleFormat::U64 => unreachable!("unsupported: {}", self.format),
-            _ => unreachable!("{}", self.format),
-        }
-    }
-
     pub(super) fn empty(format: SampleFormat) -> Self {
         Self {
             format,
@@ -281,15 +268,6 @@ impl BoxAudioBuffer {
             SampleFormat::I64 | SampleFormat::U64 => unreachable!("unsupported: {}", self.format),
             _ => unreachable!("{}", self.format),
         }
-    }
-
-    #[inline]
-    pub(super) fn get<S: Sample + 'static>(&self) -> Option<&AudioBuffer<S>> {
-        self.inner.downcast_ref::<AudioBuffer<S>>()
-    }
-    #[inline]
-    pub(super) fn expect<S: Sample + 'static>(&self) -> &AudioBuffer<S> {
-        self.get().expect("failed to downcast audio buffer")
     }
 
     #[inline]

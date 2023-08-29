@@ -61,6 +61,7 @@ impl SimpleModeUi {
             .with_transparent(true)
             .with_resizable(false)
             .with_inner_size(Size::Logical(LogicalSize::new(400.0, 200.0)))
+            .with_visible(false) // start invisible
             .build(&event_loop)
             .map_err(|err| FatalError::new("failed to create window", err))?;
         let main_web_view = create_webview(main_window, event_loop.create_proxy())?;
@@ -108,10 +109,20 @@ impl SimpleModeUi {
         use tao::event::{Event, WindowEvent};
         use tao::event_loop::ControlFlow;
 
+        log::info!("starting event loop");
+        let mut start_time = Some(Instant::now());
         let mut last_waveform = Instant::now();
 
         let event_loop = self.event_loop.take().expect("event loop");
         event_loop.run(move |event, _, control_flow| {
+            // Show the window after 150 milliseconds to avoid the flashing white window on startup
+            if start_time.is_some()
+                && Instant::now() - start_time.unwrap() > Duration::from_millis(150)
+            {
+                log::info!("showing main window");
+                self.main_web_view.window().set_visible(true);
+                start_time = None;
+            }
             *control_flow = ControlFlow::WaitUntil(Instant::now() + Duration::from_millis(100));
 
             match event {
@@ -237,6 +248,8 @@ fn create_webview(
     );
     let webview = wry::webview::WebViewBuilder::new(window)
         .map_err(|err| FatalError::new("failed to create web view", err))?
+        .with_hotkeys_zoom(false)
+        .with_download_started_handler(|_,_| false)  // don't allow file downloads
         .with_custom_protocol("internal".into(), internal_asset)
         .with_ipc_handler(move |_window, message| {
             match serde_json::from_str::<AppEvent>(&message) {
@@ -249,11 +262,11 @@ fn create_webview(
         .with_url("internal://localhost/simple_mode.html")
         .map_err(|err| FatalError::new("failed to set web view URL", err))?
         .with_file_drop_handler(|_window, event| {
+            // TODO: handle file drop by changing playing media
             dbg!(event);
             true
         })
         .with_transparent(true)
-        .with_visible(false)
         .build()
         .map_err(|err| FatalError::new("failed to create web view", err))?;
     Ok(webview)

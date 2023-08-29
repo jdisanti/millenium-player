@@ -14,6 +14,9 @@
 
 import { Message } from "./ipc";
 
+const UPDATES_PER_SECOND = 24;
+const UPDATE_INTERVAL = 1000 / UPDATES_PER_SECOND;
+
 interface WaveformData {
     spectrum: number[];
     amplitude: number[];
@@ -37,9 +40,9 @@ export class Waveform {
         this.height = canvas.height;
 
         this.interpolation_interval = setInterval(() => {
-            this.interpolation = Math.min(1, this.interpolation + 1 / 13);
+            this.interpolation = Math.min(1, this.interpolation + 1 / UPDATES_PER_SECOND);
             this.draw();
-        }, 13);
+        }, UPDATE_INTERVAL);
 
         Message.push_message_handler((msg: Message) => {
             if (msg.kind == "WaveformData") {

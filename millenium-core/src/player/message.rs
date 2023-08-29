@@ -28,6 +28,8 @@ pub enum FromPlayerMessage {
     AudioDeviceFailed(String),
     /// Failed to create an audio device.
     AudioDeviceCreationFailed(AudioDeviceError),
+    /// Updated waveform data.
+    Waveform(Waveform),
 }
 
 pub enum ToPlayerMessage {
@@ -41,6 +43,12 @@ pub enum ToPlayerMessage {
     Resume,
     /// Stop playback.
     Stop,
+}
+
+#[derive(Debug)]
+pub struct Waveform {
+    pub spectrum: Box<[f32]>,
+    pub amplitude: Box<[f32]>,
 }
 
 #[cfg(test)]
