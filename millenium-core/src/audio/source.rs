@@ -17,7 +17,7 @@ use crate::{
     metadata::{Metadata, MetadataConversionError},
 };
 use camino::Utf8PathBuf;
-use rubato::SincFixedIn;
+use rubato::ResampleResult;
 use std::fs::File;
 use std::{cmp::Ordering, error::Error as StdError};
 use symphonia::core::{
@@ -68,13 +68,37 @@ pub enum AudioSourceError {
     },
 }
 
+/// Specialized object-safe adapter for Rubato's [`Resampler`](rubato::Resampler) trait.
+pub trait Resampler {
+    /// Resample the given channels into a new set of channels.
+    ///
+    /// The destination frequency is determined by the resampler's configuration.
+    fn resample(&mut self, channels: &[Vec<f32>]) -> ResampleResult<Vec<Vec<f32>>>;
+}
+
+impl<R> Resampler for R
+where
+    R: rubato::Resampler<f32>,
+{
+    fn resample(&mut self, channels: &[Vec<f32>]) -> ResampleResult<Vec<Vec<f32>>> {
+        self.process(channels, None)
+    }
+}
+
+/// A buffer of audio data that always has samples represented as 32-bit floats,
+/// and channels that are not interleaved.
+///
+/// This buffer sits between the audio decoder and the audio sink to provide
+/// a consistent format for audio transformations such as resampling, remixing,
+/// and volume adjustment.
 #[derive(Clone)]
-pub(super) struct SourceBuffer {
+pub struct SourceBuffer {
     sample_rate: u32,
     channels: Vec<Vec<f32>>,
 }
 impl SourceBuffer {
-    pub(super) fn empty(sample_rate: u32, channels: usize) -> Self {
+    /// Creates an empty source buffer.
+    pub fn empty(sample_rate: u32, channels: usize) -> Self {
         Self {
             sample_rate,
             channels: vec![Vec::new(); channels],
@@ -82,14 +106,14 @@ impl SourceBuffer {
     }
 
     /// Clears this buffer.
-    pub(super) fn clear(&mut self) {
+    pub fn clear(&mut self) {
         for channel in &mut self.channels {
             channel.clear();
         }
     }
 
     /// Extend this buffer with another buffer's data.
-    pub(super) fn extend(&mut self, other: SourceBuffer) {
+    pub fn extend(&mut self, other: SourceBuffer) {
         debug_assert!(other.sample_rate() == self.sample_rate);
         debug_assert!(other.channel_count() == self.channel_count());
         for (into, from) in self.channels.iter_mut().zip(other.channels.iter()) {
@@ -98,7 +122,7 @@ impl SourceBuffer {
     }
 
     /// Extend this buffer to the given frame count with silence.
-    pub(super) fn extend_with_silence(&mut self, desired_frames: usize) {
+    pub fn extend_with_silence(&mut self, desired_frames: usize) {
         debug_assert!(self.frame_count() < desired_frames);
         for channel in &mut self.channels {
             channel.resize(desired_frames, 0.0);
@@ -106,7 +130,7 @@ impl SourceBuffer {
     }
 
     /// Drain the first N frames from the buffer and return them as a new buffer.
-    pub(super) fn drain(&mut self, n: usize) -> SourceBuffer {
+    pub fn drain(&mut self, n: usize) -> SourceBuffer {
         debug_assert!(self.frame_count() >= n);
         Self {
             sample_rate: self.sample_rate,
@@ -118,34 +142,40 @@ impl SourceBuffer {
         }
     }
 
-    pub(super) fn sample_rate(&self) -> u32 {
+    /// The sample rate of the source buffer.
+    pub fn sample_rate(&self) -> u32 {
         self.sample_rate
     }
 
-    pub(super) fn frame_count(&self) -> usize {
+    /// The number of frames currently in the source buffer.
+    pub fn frame_count(&self) -> usize {
         self.channels.get(0).map(Vec::len).unwrap_or(0)
     }
 
-    pub(super) fn channel_count(&self) -> usize {
+    /// The number of channels in the source buffer.
+    pub fn channel_count(&self) -> usize {
         self.channels.len()
     }
 
-    pub(super) fn channel(&self, channel: usize) -> &[f32] {
+    /// Raw samples for the given channel.
+    ///
+    /// Panics if the channel index is out of bounds.
+    pub fn channel(&self, channel: usize) -> &[f32] {
         self.channels[channel].as_slice()
     }
 
-    pub(super) fn resampled(&self, new_sample_rate: u32, resampler: &mut SincFixedIn<f32>) -> Self {
-        use rubato::Resampler as _;
+    /// Resamples this buffer into a new buffer with the given resampler.
+    pub fn resampled(&self, new_sample_rate: u32, resampler: &mut dyn Resampler) -> Self {
         Self {
             sample_rate: new_sample_rate,
             channels: resampler
-                .process(&self.channels, None)
+                .resample(&self.channels)
                 .expect("failed to resample (this is a bug)"),
         }
     }
 
-    /// Remix into a different arrangement of channels
-    pub(super) fn remix(self, new_channels: usize) -> Self {
+    /// Remixes into a different arrangement of channels in place.
+    pub fn remix(self, new_channels: usize) -> Self {
         match self.channel_count().cmp(&new_channels) {
             Ordering::Equal => self,
             Ordering::Less => self.up_mix(new_channels),
@@ -196,15 +226,18 @@ impl SourceBuffer {
         )
     }
 
-    pub(super) fn extend_interleaved_into<Into>(&self, into: &mut Vec<Into>)
+    /// Interleave into the given vec in the required sample format.
+    ///
+    /// This extends the given vec rather than overwrite it.
+    pub fn extend_interleaved_into<Format>(&self, into: &mut Vec<Format>)
     where
-        Into: Sample,
-        Into: FromSample<f32>,
+        Format: Sample,
+        Format: FromSample<f32>,
     {
         let frame_count = self.frame_count();
         let interleaved_len: usize = frame_count * self.channel_count();
         let start = into.len();
-        into.resize(into.len() + interleaved_len, Into::MID);
+        into.resize(into.len() + interleaved_len, Format::MID);
 
         for i in 0..self.channel_count() {
             let mut into_iter = into
@@ -212,7 +245,7 @@ impl SourceBuffer {
                 .skip(start + i)
                 .step_by(self.channel_count());
             for &sample in self.channel(i) {
-                *into_iter.next().unwrap() = Into::from_sample(sample);
+                *into_iter.next().unwrap() = Format::from_sample(sample);
             }
         }
     }
@@ -258,15 +291,19 @@ impl SourceBuffer {
     }
 }
 
-pub(super) struct AudioSource {
+/// An audio decoder source.
+pub struct AudioDecoderSource {
     _location: Location,
     reader: Box<dyn FormatReader>,
     decoder: Box<dyn Decoder>,
     metadata: Option<Metadata>,
 }
 
-impl AudioSource {
-    pub(super) fn new(location: Location) -> Result<Self, AudioSourceError> {
+impl AudioDecoderSource {
+    /// Creates a new audio decoder source with the given location.
+    ///
+    /// This will load the stream and metadata synchronously.
+    pub fn new(location: Location) -> Result<Self, AudioSourceError> {
         let Stream {
             reader,
             decoder,
@@ -280,11 +317,15 @@ impl AudioSource {
         })
     }
 
-    pub(super) fn metadata(&self) -> Option<&Metadata> {
+    /// The metadata from the tags on this source.
+    pub fn metadata(&self) -> Option<&Metadata> {
         self.metadata.as_ref()
     }
 
-    pub(super) fn next_chunk(&mut self) -> Result<Option<SourceBuffer>, AudioSourceError> {
+    /// Retrieve and decode the next chunk of audio data.
+    ///
+    /// Returns `Ok(None)` if the stream has ended.
+    pub fn next_chunk(&mut self) -> Result<Option<SourceBuffer>, AudioSourceError> {
         let packet = match self.reader.next_packet() {
             Ok(packet) => packet,
             // Symphonia's end of stream is an IO error with unexpected EOF

@@ -12,12 +12,11 @@
 // You should have received a copy of the GNU General Public License along with Millenium Player.
 // If not, see <https://www.gnu.org/licenses/>.
 
-use super::audio::{CpalAudioDevice, NullAudioDevice};
-use super::sink::Sink;
-use super::source::AudioSource;
 use super::{message, PlayerThreadError, PlayerThreadHandle};
+use crate::audio::device::{create_device, AudioDevice};
+use crate::audio::sink::Sink;
+use crate::audio::source::AudioDecoderSource;
 use crate::location::Location;
-use crate::player::audio::AudioDevice;
 use crate::player::message::{FromPlayerMessage, ToPlayerMessage};
 use std::sync::mpsc;
 use std::thread;
@@ -27,8 +26,8 @@ enum State {
     DoNothing,
     Quit,
     LoadLocation(Location),
-    Playing(AudioSource),
-    Paused(AudioSource),
+    Playing(AudioDecoderSource),
+    Paused(AudioDecoderSource),
 }
 
 impl State {
@@ -54,13 +53,13 @@ impl PlayerThread {
         from_tx: mpsc::Sender<message::FromPlayerMessage>,
         preferred_output_device_name: Option<String>,
     ) -> Self {
-        let device = CpalAudioDevice::new(preferred_output_device_name.as_deref())
-            .map(|d| Box::new(d) as Box<dyn AudioDevice>)
-            .unwrap_or_else(|err| {
-                log::error!("{err}");
-                let _ = from_tx.send(FromPlayerMessage::AudioDeviceCreationFailed(err));
-                Box::new(NullAudioDevice::new())
-            });
+        let device = match create_device(preferred_output_device_name.as_deref()) {
+            Ok(device) => device,
+            Err(err) => {
+                let _ = from_tx.send(FromPlayerMessage::AudioDeviceCreationFailed(err.source));
+                err.fallback_device
+            }
+        };
 
         Self {
             device,
@@ -144,7 +143,7 @@ impl PlayerThread {
         match state {
             State::LoadLocation(location) => {
                 log::info!("loading location: {:?}", location);
-                let mut source = match AudioSource::new(location) {
+                let mut source = match AudioDecoderSource::new(location) {
                     Ok(source) => source,
                     Err(err) => {
                         log::error!("failed to load location: {}", err);
@@ -180,7 +179,7 @@ impl PlayerThread {
         }
     }
 
-    fn queue_chunks(&mut self, source: &mut AudioSource) -> Option<State> {
+    fn queue_chunks(&mut self, source: &mut AudioDecoderSource) -> Option<State> {
         while self
             .current_sink
             .as_ref()
