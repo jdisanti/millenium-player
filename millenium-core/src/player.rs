@@ -16,6 +16,7 @@ use std::sync::mpsc;
 
 mod handle;
 pub mod message;
+mod state;
 mod thread;
 
 pub use handle::PlayerThreadHandle;
