@@ -21,6 +21,7 @@ use cpal::{
 };
 use std::{
     cmp::Ordering,
+    fmt,
     sync::{
         atomic::{self, AtomicBool, AtomicU64},
         mpsc::{Receiver, Sender},
@@ -79,7 +80,7 @@ pub enum AudioDeviceError {
 }
 
 /// Represents an output device that can play audio.
-pub(super) trait AudioDevice {
+pub trait AudioDevice {
     /// Create a sink for the given sample rate and number of channels.
     fn create_sink(&self, input_sample_rate: u32, input_channels: usize) -> Sink;
 
@@ -105,7 +106,41 @@ pub(super) trait AudioDevice {
     fn healthcheck(&self) -> Result<(), AudioDeviceError>;
 }
 
-pub(super) struct NullAudioDevice {
+#[derive(thiserror::Error)]
+#[error("failed to create audio device")]
+pub struct CreateDeviceError {
+    /// A fallback device that can't play audio, but keeps the application otherwise working.
+    pub fallback_device: Box<dyn AudioDevice>,
+    #[source]
+    pub source: AudioDeviceError,
+}
+
+impl fmt::Debug for CreateDeviceError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("CreateDeviceError")
+            .field("fallback_device", &"** present **")
+            .field("source", &self.source)
+            .finish()
+    }
+}
+
+/// Create an audio device for this platform.
+pub fn create_device(
+    preferred_output_device_name: Option<&str>,
+) -> Result<Box<dyn AudioDevice>, CreateDeviceError> {
+    match CpalAudioDevice::new(preferred_output_device_name) {
+        Ok(device) => Ok(Box::new(device)),
+        Err(err) => {
+            log::error!("failed to create cpal audio device: {}", err);
+            Err(CreateDeviceError {
+                fallback_device: Box::new(NullAudioDevice::new()),
+                source: err,
+            })
+        }
+    }
+}
+
+struct NullAudioDevice {
     config: SupportedStreamConfig,
     output_buffer: Arc<Mutex<BoxAudioBuffer>>,
     frames_consumed: AtomicU64,
@@ -277,7 +312,7 @@ impl<'a> StreamBuilder<'a> {
     }
 }
 
-pub(super) struct CpalAudioDevice {
+struct CpalAudioDevice {
     // Cpal audio structs
     _device: Device,
     config: SupportedStreamConfig,
@@ -294,9 +329,7 @@ pub(super) struct CpalAudioDevice {
 }
 
 impl CpalAudioDevice {
-    pub(super) fn new(
-        preferred_output_device_name: Option<&str>,
-    ) -> Result<Self, AudioDeviceError> {
+    fn new(preferred_output_device_name: Option<&str>) -> Result<Self, AudioDeviceError> {
         let host = cpal::default_host();
         let device = select_device(&host, preferred_output_device_name)?;
         log::info!("selected audio output device: {}", device.name()?);

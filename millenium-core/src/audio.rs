@@ -12,14 +12,11 @@
 // You should have received a copy of the GNU General Public License along with Millenium Player.
 // If not, see <https://www.gnu.org/licenses/>.
 
-/// Audio support logic.
-pub mod audio;
+/// Audio hardware device abstraction.
+pub mod device;
 
-/// Location struct that represents file system or network locations.
-pub mod location;
+/// A sink for audio data that sends that data to the audio device.
+pub mod sink;
 
-/// Audio player thread.
-pub mod player;
-
-/// Audio metadata/tags.
-pub mod metadata;
+/// Source buffer and audio decoder stream.
+pub mod source;

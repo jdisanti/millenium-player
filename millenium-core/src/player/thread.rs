@@ -12,61 +12,56 @@
 // You should have received a copy of the GNU General Public License along with Millenium Player.
 // If not, see <https://www.gnu.org/licenses/>.
 
-use super::audio::{CpalAudioDevice, NullAudioDevice};
-use super::sink::Sink;
-use super::source::AudioSource;
+use super::state::StateManager;
 use super::{message, PlayerThreadError, PlayerThreadHandle};
-use crate::location::Location;
-use crate::player::audio::AudioDevice;
-use crate::player::message::{FromPlayerMessage, ToPlayerMessage};
+use crate::audio::device::{create_device, AudioDevice};
+use crate::audio::sink::Sink;
+use crate::player::message::FromPlayerMessage;
 use std::sync::mpsc;
 use std::thread;
-use std::time::Duration;
 
-enum State {
-    DoNothing,
-    Quit,
-    LoadLocation(Location),
-    Playing(AudioSource),
-    Paused(AudioSource),
-}
-
-impl State {
-    fn blocked(&self) -> bool {
-        match self {
-            Self::Quit => false,
-            Self::DoNothing | Self::Paused(_) => true,
-            Self::LoadLocation(_) | Self::Playing(_) => false,
-        }
-    }
-}
-
-pub struct PlayerThread {
-    device: Box<dyn AudioDevice>,
-    current_sink: Option<Sink>,
-    to_rx: mpsc::Receiver<message::ToPlayerMessage>,
+pub(super) struct PlayerThreadResources {
+    pub(super) device: Box<dyn AudioDevice>,
+    pub(super) current_sink: Option<Sink>,
     from_tx: mpsc::Sender<message::FromPlayerMessage>,
 }
 
+impl PlayerThreadResources {
+    pub(super) fn send_message(&self, message: FromPlayerMessage) {
+        self.from_tx
+            .send(message)
+            .expect("failed to send message back to owner of the player thread");
+    }
+}
+
+/// Audio playback thread.
+pub struct PlayerThread {
+    resources: PlayerThreadResources,
+    to_rx: mpsc::Receiver<message::ToPlayerMessage>,
+}
+
 impl PlayerThread {
+    /// Creates an audio device and starts a player thread.
     fn new(
         to_rx: mpsc::Receiver<message::ToPlayerMessage>,
         from_tx: mpsc::Sender<message::FromPlayerMessage>,
         preferred_output_device_name: Option<String>,
     ) -> Self {
-        let device = CpalAudioDevice::new(preferred_output_device_name.as_deref())
-            .map(|d| Box::new(d) as Box<dyn AudioDevice>)
-            .unwrap_or_else(|err| {
-                log::error!("{err}");
-                let _ = from_tx.send(FromPlayerMessage::AudioDeviceCreationFailed(err));
-                Box::new(NullAudioDevice::new())
-            });
+        let device = match create_device(preferred_output_device_name.as_deref()) {
+            Ok(device) => device,
+            Err(err) => {
+                let _ = from_tx.send(FromPlayerMessage::AudioDeviceCreationFailed(err.source));
+                err.fallback_device
+            }
+        };
 
         Self {
-            device,
-            current_sink: None,
+            resources: PlayerThreadResources {
+                device,
+                current_sink: None,
+                from_tx,
+            },
             to_rx,
-            from_tx,
         }
     }
 
@@ -84,145 +79,28 @@ impl PlayerThread {
         Ok(PlayerThreadHandle::new(join_handle, to_tx))
     }
 
-    fn send(&self, message: FromPlayerMessage) {
-        self.from_tx
-            .send(message)
-            .expect("failed to send message back to owner of the player thread");
-    }
-
     fn run(mut self) {
         log::info!("player thread started");
 
-        let mut state = Some(State::DoNothing);
-        while !matches!(state, Some(State::Quit)) {
-            if let Err(err) = self.device.healthcheck() {
-                self.send(FromPlayerMessage::AudioDeviceFailed(format!("{err}")));
+        let mut state_manager = StateManager::new();
+        while !state_manager.should_quit() {
+            if let Err(err) = self.resources.device.healthcheck() {
+                self.resources
+                    .send_message(FromPlayerMessage::AudioDeviceFailed(format!("{err}")));
                 break;
             }
 
-            let next_message = if state.as_ref().unwrap().blocked() {
+            let next_message = if state_manager.blocked_on_messages() {
                 self.to_rx.recv().ok()
             } else {
                 self.to_rx.try_recv().ok()
             };
             if let Some(message) = next_message {
-                self.handle_message(&mut state, message);
+                state_manager.handle_message(&mut self.resources, message);
             }
-            state = Some(self.handle_state(state.take().unwrap()));
+            state_manager.update(&mut self.resources);
         }
         log::info!("player thread finished");
-    }
-
-    fn handle_message(&self, state: &mut Option<State>, message: ToPlayerMessage) {
-        match message {
-            ToPlayerMessage::Quit => {
-                *state = Some(State::Quit);
-            }
-            ToPlayerMessage::LoadAndPlayLocation(location) => {
-                *state = Some(State::LoadLocation(location));
-            }
-            ToPlayerMessage::Pause => {
-                if let Some(State::Playing(source)) = state.take() {
-                    log::info!("pausing playback");
-                    *state = Some(State::Paused(source));
-                }
-            }
-            ToPlayerMessage::Resume => {
-                if let Some(State::Paused(source)) = state.take() {
-                    log::info!("resuming playback");
-                    *state = Some(State::Playing(source));
-                }
-            }
-            ToPlayerMessage::Stop => {
-                log::info!("stopping playback");
-                *state = Some(State::DoNothing);
-            }
-        }
-    }
-
-    fn handle_state(&mut self, state: State) -> State {
-        match state {
-            State::LoadLocation(location) => {
-                log::info!("loading location: {:?}", location);
-                let mut source = match AudioSource::new(location) {
-                    Ok(source) => source,
-                    Err(err) => {
-                        log::error!("failed to load location: {}", err);
-                        self.send(FromPlayerMessage::FailedToLoadLocation(err));
-                        return State::DoNothing;
-                    }
-                };
-                if let Some(metadata) = source.metadata() {
-                    log::info!("loaded metadata: {:?}", metadata);
-                    self.send(FromPlayerMessage::MetadataLoaded(metadata.clone()));
-                }
-                self.device.pause().expect("failed to pause audio stream");
-                let state = if let Some(new_state) = self.queue_chunks(&mut source) {
-                    new_state
-                } else {
-                    State::Playing(source)
-                };
-                self.device.play().expect("failed to pause audio stream");
-                state
-            }
-            State::Playing(mut source) => {
-                let next_state = if let Some(new_state) = self.queue_chunks(&mut source) {
-                    new_state
-                } else {
-                    State::Playing(source)
-                };
-                if let Some(sink) = self.current_sink.as_mut() {
-                    sink.send_audio_with_timeout(Duration::from_millis(50));
-                }
-                next_state
-            }
-            state => state,
-        }
-    }
-
-    fn queue_chunks(&mut self, source: &mut AudioSource) -> Option<State> {
-        while self
-            .current_sink
-            .as_ref()
-            .map(|s| s.needs_more_chunks())
-            .unwrap_or(true)
-        {
-            match source.next_chunk() {
-                Ok(Some(chunk)) => {
-                    if chunk.frame_count() > 0 {
-                        let sample_rate = chunk.sample_rate();
-                        let channels = chunk.channel_count();
-                        let recreate_sink = match &self.current_sink {
-                            Some(sink) => {
-                                sink.input_channels() != channels
-                                    || sink.input_sample_rate() != sample_rate
-                            }
-                            None => true,
-                        };
-                        if recreate_sink {
-                            log::info!("recreating the audio sink");
-                            if let Some(s) = self.current_sink.as_mut() {
-                                s.flush()
-                            }
-                            self.current_sink =
-                                Some(self.device.create_sink(sample_rate, channels));
-                        }
-                        self.current_sink.as_mut().unwrap().queue(chunk);
-                    }
-                }
-                Ok(None) => {
-                    log::info!("finished playing track");
-                    self.send(FromPlayerMessage::FinishedTrack);
-                    return Some(State::DoNothing);
-                }
-                Err(err) => {
-                    log::error!("error occurred while decoding audio: {}", err);
-                    self.send(FromPlayerMessage::FailedToDecodeAudio(err));
-                    return Some(State::DoNothing);
-                }
-            }
-        }
-        None
     }
 }
 
