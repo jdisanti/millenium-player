@@ -13,16 +13,19 @@
 // If not, see <https://www.gnu.org/licenses/>.
 
 use super::state::StateManager;
+use super::waveform::{Waveform, WaveformCalculator};
 use super::{message, PlayerThreadError, PlayerThreadHandle};
 use crate::audio::device::{create_device, AudioDevice};
 use crate::audio::sink::Sink;
 use crate::player::message::FromPlayerMessage;
-use std::sync::mpsc;
+use std::sync::{mpsc, Arc, Mutex};
 use std::thread;
 
 pub(super) struct PlayerThreadResources {
     pub(super) device: Box<dyn AudioDevice>,
     pub(super) current_sink: Option<Sink>,
+    pub(super) waveform_calculator: Option<WaveformCalculator>,
+    pub(super) waveform: Arc<Mutex<Waveform>>,
     from_tx: mpsc::Sender<message::FromPlayerMessage>,
 }
 
@@ -59,6 +62,8 @@ impl PlayerThread {
             resources: PlayerThreadResources {
                 device,
                 current_sink: None,
+                waveform_calculator: None,
+                waveform: Arc::new(Mutex::new(Waveform::empty())),
                 from_tx,
             },
             to_rx,

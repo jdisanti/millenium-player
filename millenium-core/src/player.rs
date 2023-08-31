@@ -18,6 +18,7 @@ mod handle;
 pub mod message;
 mod state;
 mod thread;
+pub mod waveform;
 
 pub use handle::PlayerThreadHandle;
 pub use thread::PlayerThread;

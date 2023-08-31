@@ -54,3 +54,10 @@ export class Message {
         }
     }
 }
+
+export interface MessageWaveformData {
+    waveform: {
+        spectrum: number[],
+        amplitude: number[],
+    }
+}

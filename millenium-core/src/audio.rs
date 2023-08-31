@@ -20,3 +20,9 @@ pub mod sink;
 
 /// Source buffer and audio decoder stream.
 pub mod source;
+
+/// Type alias for sample rates to help with consistency.
+pub type SampleRate = u32;
+
+/// Type alias for channel counts to help with consistency.
+pub type ChannelCount = u8;

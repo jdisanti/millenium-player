@@ -32,6 +32,7 @@ cpal = "0.15.2"
 log = "0.4.20"
 rubato = "0.14.1"
 rustfft = "6.1.0"
+serde = { version = "1.0.188", features = ["derive"] }
 symphonia = { version = "0.5.3", features = ["adpcm", "flac", "mp1", "mp2", "mp3", "pcm", "vorbis"] }
 thiserror = "1.0.47"
 url = "2.4.0"

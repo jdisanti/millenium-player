@@ -12,8 +12,10 @@
 // You should have received a copy of the GNU General Public License along with Millenium Player.
 // If not, see <https://www.gnu.org/licenses/>.
 
+use super::waveform::Waveform;
 use crate::audio::{device::AudioDeviceError, source::AudioSourceError};
 use crate::{location::Location, metadata::Metadata};
+use std::sync::{Arc, Mutex};
 
 pub enum FromPlayerMessage {
     /// This is the loaded track metadata.
@@ -29,7 +31,7 @@ pub enum FromPlayerMessage {
     /// Failed to create an audio device.
     AudioDeviceCreationFailed(AudioDeviceError),
     /// Updated waveform data.
-    Waveform(Waveform),
+    Waveform(Arc<Mutex<Waveform>>),
 }
 
 pub enum ToPlayerMessage {
@@ -43,12 +45,6 @@ pub enum ToPlayerMessage {
     Resume,
     /// Stop playback.
     Stop,
-}
-
-#[derive(Debug)]
-pub struct Waveform {
-    pub spectrum: Box<[f32]>,
-    pub amplitude: Box<[f32]>,
 }
 
 #[cfg(test)]

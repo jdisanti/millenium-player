@@ -18,6 +18,7 @@ use millenium_core::{
     location::Location,
     player::{
         message::{FromPlayerMessage, ToPlayerMessage},
+        waveform::Waveform,
         PlayerThread, PlayerThreadHandle,
     },
 };
@@ -44,17 +45,17 @@ pub struct SimpleModeUi {
     _osx_app_menu: OsxAppMenu,
 
     main_web_view: wry::webview::WebView,
-    event_loop: Option<tao::event_loop::EventLoop<AppEvent>>,
+    event_loop: Option<tao::event_loop::EventLoop<FromUiEvent>>,
 
     player: Option<PlayerThreadHandle>,
-    // TODO receive and handle messages from player thread
-    _player_receiver: Receiver<FromPlayerMessage>,
+    player_receiver: Receiver<FromPlayerMessage>,
     _playlist: Playlist,
+    waveform: Waveform,
 }
 
 impl SimpleModeUi {
     pub fn new(locations: &[Location]) -> Result<Self, FatalError> {
-        let event_loop: EventLoop<AppEvent> = EventLoopBuilder::with_user_event().build();
+        let event_loop: EventLoop<FromUiEvent> = EventLoopBuilder::with_user_event().build();
         let main_window = tao::window::WindowBuilder::new()
             .with_title(APP_TITLE)
             .with_decorations(false)
@@ -100,8 +101,9 @@ impl SimpleModeUi {
             event_loop: Some(event_loop),
 
             player: Some(player),
-            _player_receiver: player_receiver,
+            player_receiver,
             _playlist: playlist,
+            waveform: Waveform::empty(),
         })
     }
 
@@ -134,13 +136,13 @@ impl SimpleModeUi {
                         }
                     }
                 }
-                Event::UserEvent(AppEvent::Quit)
+                Event::UserEvent(FromUiEvent::Quit)
                 | Event::WindowEvent {
                     event: WindowEvent::CloseRequested,
                     ..
                 } => *control_flow = ControlFlow::Exit,
 
-                Event::UserEvent(AppEvent::DragWindowStart) => {
+                Event::UserEvent(FromUiEvent::DragWindowStart) => {
                     self.main_web_view.window().drag_window().unwrap()
                 }
 
@@ -149,15 +151,8 @@ impl SimpleModeUi {
                         last_waveform = Instant::now();
                         let _ = self.main_web_view.evaluate_script(&format!(
                             "millenium.Message.handle('WaveformData', {});",
-                            serde_json::to_string(&AppEvent::WaveformData {
-                                spectrum: vec![
-                                    0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0, 0.9, 0.8,
-                                    0.7, 0.6, 0.5, 0.4, 0.3, 0.2, 0.1
-                                ],
-                                amplitude: vec![
-                                    0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0, 0.9, 0.8,
-                                    0.7, 0.6, 0.5, 0.4, 0.3, 0.2, 0.1
-                                ]
+                            serde_json::to_string(&ToUiEvent::WaveformData {
+                                waveform: &self.waveform
                             })
                             .unwrap()
                         ));
@@ -165,6 +160,33 @@ impl SimpleModeUi {
                 }
 
                 _ => (),
+            }
+
+            if let Ok(message) = self.player_receiver.try_recv() {
+                match message {
+                    FromPlayerMessage::AudioDeviceCreationFailed(_err) => {
+                        // TODO
+                    }
+                    FromPlayerMessage::AudioDeviceFailed(_err) => {
+                        // TODO
+                    }
+                    FromPlayerMessage::FailedToDecodeAudio(_err) => {
+                        // TODO
+                    }
+                    FromPlayerMessage::FailedToLoadLocation(_err) => {
+                        // TODO
+                    }
+                    FromPlayerMessage::FinishedTrack => {
+                        // TODO
+                    }
+                    FromPlayerMessage::MetadataLoaded(_metadata) => {
+                        // TODO
+                    }
+                    FromPlayerMessage::Waveform(waveform) => {
+                        let waveform_lock = waveform.lock().unwrap();
+                        self.waveform.copy_from(&*waveform_lock);
+                    }
+                }
             }
 
             if let Err(err) = self.healthcheck() {
@@ -190,15 +212,17 @@ impl SimpleModeUi {
     }
 }
 
-#[derive(Debug, serde::Deserialize, serde::Serialize)]
+#[derive(Debug, serde::Deserialize)]
 #[serde(tag = "kind")]
-enum AppEvent {
+enum FromUiEvent {
     Quit,
     DragWindowStart,
-    WaveformData {
-        spectrum: Vec<f32>,
-        amplitude: Vec<f32>,
-    },
+}
+
+#[derive(Debug, serde::Serialize)]
+#[serde(tag = "kind")]
+enum ToUiEvent<'a> {
+    WaveformData { waveform: &'a Waveform },
 }
 
 #[cfg(target_os = "macos")]
@@ -240,7 +264,7 @@ impl OsxAppMenu {
 
 fn create_webview(
     window: tao::window::Window,
-    event_loop_proxy: EventLoopProxy<AppEvent>,
+    event_loop_proxy: EventLoopProxy<FromUiEvent>,
 ) -> Result<wry::webview::WebView, FatalError> {
     log::info!(
         "webview version: {}",
@@ -252,7 +276,7 @@ fn create_webview(
         .with_download_started_handler(|_,_| false)  // don't allow file downloads
         .with_custom_protocol("internal".into(), internal_asset)
         .with_ipc_handler(move |_window, message| {
-            match serde_json::from_str::<AppEvent>(&message) {
+            match serde_json::from_str::<FromUiEvent>(&message) {
                 Ok(event) => event_loop_proxy.send_event(event).unwrap(),
                 Err(err) => {
                     log::error!("failed to deserialize IPC message from the webview: {err}\nmessage: {message}")

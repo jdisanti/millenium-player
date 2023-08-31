@@ -12,7 +12,9 @@
 // You should have received a copy of the GNU General Public License along with Millenium Player.
 // If not, see <https://www.gnu.org/licenses/>.
 
-use super::{message::ToPlayerMessage, thread::PlayerThreadResources};
+use super::{
+    message::ToPlayerMessage, thread::PlayerThreadResources, waveform::WaveformCalculator,
+};
 use crate::{
     audio::source::AudioDecoderSource, location::Location, player::message::FromPlayerMessage,
 };
@@ -132,7 +134,17 @@ struct StatePlaying {
 
 impl State for StatePlaying {
     fn update(mut self, resources: &mut PlayerThreadResources) -> CurrentState {
-        let next_state = if let Some(new_state) = queue_chunks(resources, &mut self.source) {
+        let maybe_next_state = queue_chunks(resources, &mut self.source);
+
+        let waveform_calc = resources.waveform_calculator.as_mut().unwrap();
+        let mut waveform_lock = resources.waveform.lock().unwrap();
+        if waveform_calc.waveform_needs_update(&*waveform_lock) {
+            waveform_calc.copy_latest_waveform_into(&mut *waveform_lock);
+            drop(waveform_lock);
+            resources.send_message(FromPlayerMessage::Waveform(resources.waveform.clone()));
+        }
+
+        let next_state = if let Some(new_state) = maybe_next_state {
             new_state
         } else {
             CurrentState::Playing(self)
@@ -194,6 +206,17 @@ fn queue_chunks(
             Ok(Some(chunk)) => {
                 if chunk.frame_count() > 0 {
                     let sample_rate = chunk.sample_rate();
+
+                    // Note that since we're doing this during audio decode, there is a slight
+                    // delay between the audio being played and the waveform being updated.
+                    // However, this delay is small enough as to not be noticeable.
+                    if resources.waveform_calculator.is_none() {
+                        resources.waveform_calculator = Some(WaveformCalculator::new(sample_rate));
+                    }
+                    let waveform_calc = resources.waveform_calculator.as_mut().unwrap();
+                    waveform_calc.push_source(&chunk);
+                    waveform_calc.calculate();
+
                     let channels = chunk.channel_count();
                     let recreate_sink = match &resources.current_sink {
                         Some(sink) => {

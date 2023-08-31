@@ -2315,6 +2315,7 @@ dependencies = [
  "pretty_assertions",
  "rubato",
  "rustfft",
+ "serde",
  "symphonia",
  "thiserror",
  "url",

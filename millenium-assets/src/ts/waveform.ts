@@ -12,7 +12,7 @@
 // You should have received a copy of the GNU General Public License along with Millenium Player.
 // If not, see <https://www.gnu.org/licenses/>.
 
-import { Message } from "./ipc";
+import { Message, MessageWaveformData } from "./ipc";
 
 const UPDATES_PER_SECOND = 24;
 const UPDATE_INTERVAL = 1000 / UPDATES_PER_SECOND;
@@ -40,15 +40,36 @@ export class Waveform {
         this.height = canvas.height;
 
         this.interpolation_interval = setInterval(() => {
-            this.interpolation = Math.min(1, this.interpolation + 1 / UPDATES_PER_SECOND);
+            // We want it to take 1/4 of a second to interpolate from one waveform to the next.
+            const interpolation_rate = 4 / UPDATES_PER_SECOND;
+            this.interpolation = Math.min(1, this.interpolation + interpolation_rate);
             this.draw();
         }, UPDATE_INTERVAL);
 
         Message.push_message_handler((msg: Message) => {
             if (msg.kind == "WaveformData") {
+                const data = msg.data as MessageWaveformData;
+                const waves = this.waveforms;
+                const interp = this.interpolation;
+
+                if (waves[0].spectrum.length == 0) {
+                    waves[0] = {
+                        spectrum: data.waveform.spectrum,
+                        amplitude: data.waveform.amplitude,
+                    };
+                    waves[1] = waves[0];
+                    this.interpolation = 0;
+                    return;
+                }
+                for (let i = 0; i < waves[0].spectrum.length; i++) {
+                    waves[0].spectrum[i] = waves[0].spectrum[i] * (1 - interp) + waves[1].spectrum[i] * interp;
+                    waves[0].amplitude[i] = waves[0].amplitude[i] * (1 - interp) + waves[1].amplitude[i] * interp;
+                }
+                waves[1] = {
+                    spectrum: data.waveform.spectrum,
+                    amplitude: data.waveform.amplitude,
+                };
                 this.interpolation = 0;
-                this.waveforms[0] = this.waveforms[1];
-                this.waveforms[1] = msg.data as WaveformData;
             }
         });
     }
