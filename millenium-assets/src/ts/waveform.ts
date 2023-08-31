@@ -12,10 +12,16 @@
 // You should have received a copy of the GNU General Public License along with Millenium Player.
 // If not, see <https://www.gnu.org/licenses/>.
 
-import { Message, MessageWaveformData } from "./ipc";
+import { IpcAjax, UiData } from "./ipc";
 
-const UPDATES_PER_SECOND = 24;
+const UPDATES_PER_SECOND = 30;
 const UPDATE_INTERVAL = 1000 / UPDATES_PER_SECOND;
+
+const DATA_REFRESHES_PER_SECOND = 10;
+const DATA_REFRESH_INTERVAL = 1000 / DATA_REFRESHES_PER_SECOND;
+
+const UPDATES_PER_DATA_REFRESH = UPDATES_PER_SECOND / DATA_REFRESHES_PER_SECOND;
+const INTERPOLATION_RATE = (DATA_REFRESH_INTERVAL / UPDATES_PER_DATA_REFRESH) / DATA_REFRESH_INTERVAL;
 
 interface WaveformData {
     spectrum: number[];
@@ -33,6 +39,8 @@ export class Waveform {
     ];
     private interpolation: number = 0;
     private interpolation_interval: any;
+    private next_data: UiData | null = null;
+    private next_data_interval: any;
 
     constructor(private canvas: HTMLCanvasElement) {
         this.ctx = canvas.getContext("2d");
@@ -40,38 +48,25 @@ export class Waveform {
         this.height = canvas.height;
 
         this.interpolation_interval = setInterval(() => {
-            // We want it to take 1/4 of a second to interpolate from one waveform to the next.
-            const interpolation_rate = 4 / UPDATES_PER_SECOND;
-            this.interpolation = Math.min(1, this.interpolation + interpolation_rate);
+            this.interpolation = this.interpolation + INTERPOLATION_RATE;
+            if (this.interpolation >= 1) {
+                this.interpolation = 0;
+                this.waveforms[0] = this.waveforms[1];
+                if (this.next_data) {
+                    this.waveforms[1] = {
+                        spectrum: this.next_data.waveform.spectrum,
+                        amplitude: this.next_data.waveform.amplitude,
+                    };
+                }
+            }
             this.draw();
         }, UPDATE_INTERVAL);
 
-        Message.push_message_handler((msg: Message) => {
-            if (msg.kind == "WaveformData") {
-                const data = msg.data as MessageWaveformData;
-                const waves = this.waveforms;
-                const interp = this.interpolation;
-
-                if (waves[0].spectrum.length == 0) {
-                    waves[0] = {
-                        spectrum: data.waveform.spectrum,
-                        amplitude: data.waveform.amplitude,
-                    };
-                    waves[1] = waves[0];
-                    this.interpolation = 0;
-                    return;
-                }
-                for (let i = 0; i < waves[0].spectrum.length; i++) {
-                    waves[0].spectrum[i] = waves[0].spectrum[i] * (1 - interp) + waves[1].spectrum[i] * interp;
-                    waves[0].amplitude[i] = waves[0].amplitude[i] * (1 - interp) + waves[1].amplitude[i] * interp;
-                }
-                waves[1] = {
-                    spectrum: data.waveform.spectrum,
-                    amplitude: data.waveform.amplitude,
-                };
-                this.interpolation = 0;
-            }
-        });
+        this.next_data_interval = setInterval(() => {
+            IpcAjax.get("ui-data").then((data: object) => {
+                this.next_data = data as UiData;
+            });
+        }, DATA_REFRESH_INTERVAL / 2);
     }
 
     private draw() {

@@ -24,7 +24,10 @@ use millenium_core::{
 };
 use std::{
     borrow::Cow,
-    sync::mpsc::{self, Receiver},
+    sync::{
+        mpsc::{self, Receiver},
+        Arc, Mutex,
+    },
     time::{Duration, Instant},
 };
 use tao::{
@@ -36,6 +39,11 @@ use wry::webview::webview_version;
 struct Playlist {
     locations: Vec<Location>,
     current: Option<usize>,
+}
+
+#[derive(Debug, serde::Serialize)]
+struct UiData {
+    waveform: Waveform,
 }
 
 pub struct SimpleModeUi {
@@ -50,11 +58,16 @@ pub struct SimpleModeUi {
     player: Option<PlayerThreadHandle>,
     player_receiver: Receiver<FromPlayerMessage>,
     _playlist: Playlist,
-    waveform: Waveform,
+
+    ui_data: Arc<Mutex<UiData>>,
 }
 
 impl SimpleModeUi {
     pub fn new(locations: &[Location]) -> Result<Self, FatalError> {
+        let ui_data = Arc::new(Mutex::new(UiData {
+            waveform: Waveform::empty(),
+        }));
+
         let event_loop: EventLoop<FromUiEvent> = EventLoopBuilder::with_user_event().build();
         let main_window = tao::window::WindowBuilder::new()
             .with_title(APP_TITLE)
@@ -65,7 +78,8 @@ impl SimpleModeUi {
             .with_visible(false) // start invisible
             .build(&event_loop)
             .map_err(|err| FatalError::new("failed to create window", err))?;
-        let main_web_view = create_webview(main_window, event_loop.create_proxy())?;
+        let main_web_view =
+            create_webview(main_window, event_loop.create_proxy(), ui_data.clone())?;
 
         let filtered_locations: Vec<Location> = locations
             .iter()
@@ -103,7 +117,8 @@ impl SimpleModeUi {
             player: Some(player),
             player_receiver,
             _playlist: playlist,
-            waveform: Waveform::empty(),
+
+            ui_data,
         })
     }
 
@@ -113,7 +128,6 @@ impl SimpleModeUi {
 
         log::info!("starting event loop");
         let mut start_time = Some(Instant::now());
-        let mut last_waveform = Instant::now();
 
         let event_loop = self.event_loop.take().expect("event loop");
         event_loop.run(move |event, _, control_flow| {
@@ -146,19 +160,6 @@ impl SimpleModeUi {
                     self.main_web_view.window().drag_window().unwrap()
                 }
 
-                Event::MainEventsCleared => {
-                    if Instant::now() - last_waveform > Duration::from_millis(100) {
-                        last_waveform = Instant::now();
-                        let _ = self.main_web_view.evaluate_script(&format!(
-                            "millenium.Message.handle('WaveformData', {});",
-                            serde_json::to_string(&ToUiEvent::WaveformData {
-                                waveform: &self.waveform
-                            })
-                            .unwrap()
-                        ));
-                    }
-                }
-
                 _ => (),
             }
 
@@ -177,14 +178,16 @@ impl SimpleModeUi {
                         // TODO
                     }
                     FromPlayerMessage::FinishedTrack => {
-                        // TODO
+                        let mut ui_data_lock = self.ui_data.lock().unwrap();
+                        ui_data_lock.waveform.copy_from(&Waveform::empty());
                     }
                     FromPlayerMessage::MetadataLoaded(_metadata) => {
                         // TODO
                     }
                     FromPlayerMessage::Waveform(waveform) => {
                         let waveform_lock = waveform.lock().unwrap();
-                        self.waveform.copy_from(&*waveform_lock);
+                        let mut ui_data_lock = self.ui_data.lock().unwrap();
+                        ui_data_lock.waveform.copy_from(&*waveform_lock);
                     }
                 }
             }
@@ -221,8 +224,8 @@ enum FromUiEvent {
 
 #[derive(Debug, serde::Serialize)]
 #[serde(tag = "kind")]
-enum ToUiEvent<'a> {
-    WaveformData { waveform: &'a Waveform },
+enum ToUiEvent {
+    // ...
 }
 
 #[cfg(target_os = "macos")]
@@ -265,6 +268,7 @@ impl OsxAppMenu {
 fn create_webview(
     window: tao::window::Window,
     event_loop_proxy: EventLoopProxy<FromUiEvent>,
+    ui_data: Arc<Mutex<UiData>>,
 ) -> Result<wry::webview::WebView, FatalError> {
     log::info!(
         "webview version: {}",
@@ -274,7 +278,10 @@ fn create_webview(
         .map_err(|err| FatalError::new("failed to create web view", err))?
         .with_hotkeys_zoom(false)
         .with_download_started_handler(|_,_| false)  // don't allow file downloads
-        .with_custom_protocol("internal".into(), internal_asset)
+        .with_custom_protocol("internal".into(), {
+            let ui_data = ui_data.clone();
+            move |request| internal_protocol(ui_data.clone(), request)
+        })
         .with_ipc_handler(move |_window, message| {
             match serde_json::from_str::<FromUiEvent>(&message) {
                 Ok(event) => event_loop_proxy.send_event(event).unwrap(),
@@ -296,23 +303,44 @@ fn create_webview(
     Ok(webview)
 }
 
-fn internal_asset(
+fn internal_protocol(
+    ui_data: Arc<Mutex<UiData>>,
     request: &http::Request<Vec<u8>>,
 ) -> Result<http::Response<Cow<'static, [u8]>>, wry::Error> {
+    fn response_404() -> Result<http::Response<Cow<'static, [u8]>>, wry::Error> {
+        let empty = Cow::Borrowed(&[][..]);
+        Ok(http::Response::builder().status(404).body(empty).unwrap())
+    }
+
     let path = request.uri().path();
-    log::info!("loading asset \"{path}\"");
-    match asset(&path[1..]) {
-        Ok(asset) => Ok(http::Response::builder()
-            .status(200)
-            .header("Content-Type", asset.mime)
-            .body(asset.contents)
-            .unwrap()),
-        Err(err) => {
-            log::error!("{err}");
-            Ok(http::Response::builder()
-                .status(404)
-                .body(Cow::Owned(format!("{err}").into_bytes()))
-                .unwrap())
+    if path.starts_with("/ipc/") {
+        match path {
+            "/ipc/ui-data" => {
+                let ui_data_lock = ui_data.lock().unwrap();
+                let body = serde_json::to_vec(&*ui_data_lock).unwrap();
+                Ok(http::Response::builder()
+                    .status(200)
+                    .header("Content-Type", "application/json")
+                    .body(body.into())
+                    .unwrap())
+            }
+            _ => {
+                log::error!("unknown IPC request: {path}");
+                response_404()
+            }
+        }
+    } else {
+        log::info!("loading asset \"{path}\"");
+        match asset(&path[1..]) {
+            Ok(asset) => Ok(http::Response::builder()
+                .status(200)
+                .header("Content-Type", asset.mime)
+                .body(asset.contents)
+                .unwrap()),
+            Err(err) => {
+                log::error!("{err}");
+                response_404()
+            }
         }
     }
 }

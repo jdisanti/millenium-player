@@ -236,7 +236,9 @@ impl<const BIN_COUNT: usize> AmplitudeCalculator<BIN_COUNT> {
 
     fn push_source(&mut self, source: &SourceBuffer) {
         debug_assert!(source.channel_count() > 0);
+        #[cfg(debug_assertions)]
         debug_assert_eq!(self.sample_rate, source.sample_rate());
+
         if source.channel_count() == 1 {
             self.sample_buffer
                 .extend(source.channel(0).iter().copied().map(f32::abs));
