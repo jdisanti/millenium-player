@@ -21,7 +21,7 @@ interface WaveformData {
 }
 
 class WaveformRefresher {
-    data: WaveformData | null = null;
+    data: WaveformData = { spectrum: new Float32Array(0), amplitude: new Float32Array(0) };
 
     private interval: any;
     private fetching: boolean = false;

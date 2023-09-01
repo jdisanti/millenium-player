@@ -13,13 +13,13 @@
 // If not, see <https://www.gnu.org/licenses/>.
 
 use crate::audio::{source::SourceBuffer, SampleRate};
+use spectrum_analyzer::{samples_fft_to_spectrum, FrequencyLimit};
 use std::{
     f32::consts::PI,
-    sync::Arc,
     time::{Duration, Instant},
 };
 
-const DEFAULT_BINS: usize = 24;
+const DEFAULT_BINS: usize = 31;
 
 #[derive(Debug)]
 pub struct Waveform<const BIN_COUNT: usize = DEFAULT_BINS> {
@@ -69,7 +69,7 @@ pub struct WaveformCalculator<const BIN_COUNT: usize = DEFAULT_BINS> {
 impl<const BIN_COUNT: usize> WaveformCalculator<BIN_COUNT> {
     pub fn new(sample_rate: SampleRate) -> Self {
         Self {
-            spectrum: SpectrumCalculator::new(),
+            spectrum: SpectrumCalculator::new(sample_rate),
             amplitude: AmplitudeCalculator::new(sample_rate),
         }
     }
@@ -97,103 +97,99 @@ impl<const BIN_COUNT: usize> WaveformCalculator<BIN_COUNT> {
 }
 
 struct SpectrumCalculator<const BIN_COUNT: usize> {
+    sample_rate: SampleRate,
     required_samples: usize,
     sample_buffer: Vec<f32>,
+    calc_buffer: Vec<f32>,
     output_buffer: [f32; BIN_COUNT],
     last_calculate: Instant,
-
-    fft_plan: Arc<dyn rustfft::Fft<f32>>,
-    fft_buffer: Vec<rustfft::num_complex::Complex<f32>>,
-    fft_scratch: Vec<rustfft::num_complex::Complex<f32>>,
-    fft_window: Box<[f32]>,
 }
 
 impl<const BIN_COUNT: usize> SpectrumCalculator<BIN_COUNT> {
-    fn new() -> Self {
-        // Number of frequency bins = required samples / 2 + 1
-        //
-        // The output of the Fast Fourier Transform is (mostly) symmetric (or a mirror image)
-        // around the center point, and only the second half of the output will be used.
-        //
-        // Thus, to get the output to match our bin count, the required samples must be
-        // 2 * waveform size - 1.
-        let required_samples = BIN_COUNT * 2 - 1;
-
-        let mut planner = rustfft::FftPlanner::<f32>::new();
-        let fft_plan = planner.plan_fft_forward(required_samples);
-        let fft_buffer = vec![rustfft::num_complex::Complex::default(); required_samples];
-        let fft_scratch =
-            vec![rustfft::num_complex::Complex::default(); fft_plan.get_inplace_scratch_len()];
-        let fft_window = (0..required_samples)
-            .map(|i| {
-                // Hamming window function
-                0.54 * (1.0 - (2.0 * PI * i as f32 / required_samples as f32).cos())
-            })
-            .collect();
+    fn new(sample_rate: SampleRate) -> Self {
+        let required_samples = 8192;
         Self {
+            sample_rate,
             required_samples,
             // Allocate a little more than needed since we're getting an entire source
             // buffer at a time, and thus, could exceed the required number of samples.
             sample_buffer: Vec::with_capacity(required_samples + required_samples / 2),
             output_buffer: [0f32; BIN_COUNT],
             last_calculate: Instant::now() - Duration::from_secs(1),
-
-            fft_plan,
-            fft_buffer,
-            fft_scratch,
-            fft_window,
+            calc_buffer: vec![0f32; required_samples],
         }
+    }
+
+    fn apply_hamming_window(data: &mut [f32]) {
+        let len = data.len() as f32;
+        for (i, s) in data.iter_mut().enumerate() {
+            let w = 0.54 * (2.0 * PI * i as f32 / len).cos();
+            *s *= w;
+        }
+    }
+
+    fn log_max(actual_max_range_hz: f32) -> f32 {
+        (actual_max_range_hz - 100.0).log10() - 2.0
+    }
+
+    #[inline]
+    fn bin(frequency: f32, actual_min_range_hz: f32, log_max: f32) -> usize {
+        let log = (frequency - actual_min_range_hz + 100.0).log10() - 2.0;
+        let bin = log / log_max * (BIN_COUNT - 1) as f32;
+        bin.round() as usize
     }
 
     pub fn calculate(&mut self) -> bool {
         if self.sample_buffer.len() < self.required_samples {
             return false;
         }
+        if Instant::now() - self.last_calculate < Duration::from_millis(1000 / 30) {
+            return false;
+        }
 
-        let sample_to_complex = |(s, w)| rustfft::num_complex::Complex::new(s * w, 0.0);
-
-        // Fill the FFT buffer with the samples, with the window applied.
-        self.fft_buffer.clear();
-        // Drain the first half of the required samples into the FFT buffer
-        self.fft_buffer.extend(
-            self.sample_buffer
-                .drain(..(self.required_samples / 2))
-                .zip(self.fft_window.iter().copied())
-                .map(sample_to_complex),
-        );
-        // Copy the second half into the FFT buffer.
-        self.fft_buffer.extend(
+        // Copy samples into calc buffer
+        self.calc_buffer.clear();
+        self.calc_buffer.extend(
             self.sample_buffer
                 .iter()
-                .take(self.required_samples / 2 + 1)
-                .copied()
-                .zip(self.fft_window.iter().copied().skip(self.fft_buffer.len()))
-                .map(sample_to_complex),
+                .take(self.required_samples)
+                .copied(),
         );
 
-        self.fft_plan
-            .process_with_scratch(&mut self.fft_buffer, &mut self.fft_scratch);
-        let scale = 1.0 / (self.fft_buffer.len() as f32).sqrt();
-        let mut calc_iter = self.output_buffer.iter_mut().zip(
-            self.fft_buffer
-                .iter()
-                .rev()
-                .skip(2)
-                .take(BIN_COUNT)
-                // Convert complex to magnitude
-                .map(|c| c.norm() * scale)
-                // Clamp
-                .map(|s| f32::min(1.0, f32::max(0f32, s))),
-        );
-        for (out, calc) in &mut calc_iter {
-            *out = calc;
+        const MIN_RANGE_HZ: f32 = 20.0;
+        const MAX_RANGE_HZ: f32 = 20_000.0;
+
+        Self::apply_hamming_window(&mut self.calc_buffer);
+        let spectrum = samples_fft_to_spectrum(
+            &self.calc_buffer,
+            self.sample_rate,
+            FrequencyLimit::Range(MIN_RANGE_HZ, MAX_RANGE_HZ),
+            None,
+        )
+        .expect("failed to calculate spectrum");
+        debug_assert!(spectrum.data().len() > BIN_COUNT);
+
+        let actual_min_range_hz = spectrum.min_fr().val();
+        let actual_max_range_hz = spectrum.max_fr().val();
+        let log_max = Self::log_max(actual_max_range_hz);
+
+        self.output_buffer.iter_mut().for_each(|v| *v *= 0.3);
+        for (freq, value) in spectrum.data().iter() {
+            let bin = Self::bin(freq.val(), actual_min_range_hz, log_max);
+            let value = (value.val() + 1.0).log10() * 0.3;
+            self.output_buffer[bin] = f32::max(self.output_buffer[bin], value);
         }
         self.last_calculate = Instant::now();
         true
     }
 
     fn push_source(&mut self, source: &SourceBuffer) {
-        self.sample_buffer.extend(source.channel(0).iter().copied());
+        debug_assert!(source.channel_count() > 0);
+        debug_assert_eq!(self.sample_rate, source.sample_rate());
+
+        let source_mono = source.clone().remix(1);
+        self.sample_buffer
+            .extend(source_mono.channel(0).iter().copied());
         if self.sample_buffer.len() > self.required_samples {
             self.sample_buffer
                 .drain(..(self.sample_buffer.len() - self.required_samples));
@@ -220,8 +216,8 @@ struct AmplitudeCalculator<const BIN_COUNT: usize> {
 
 impl<const BIN_COUNT: usize> AmplitudeCalculator<BIN_COUNT> {
     fn new(sample_rate: SampleRate) -> Self {
-        // We want the bins to represent a quarter second of audio
-        let required_samples = (sample_rate as usize / 4) / BIN_COUNT;
+        // We want the full range of bins to represent one second of audio
+        let required_samples = sample_rate as usize / BIN_COUNT;
         Self {
             #[cfg(debug_assertions)]
             sample_rate,
