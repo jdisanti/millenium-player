@@ -25,6 +25,7 @@ class WaveformRefresher {
 
     private interval: any;
     private fetching: boolean = false;
+    private on_refresh: ((data: WaveformData) => void) | null = null;
     constructor() {
         this.interval = setInterval(() => {
             if (!this.fetching) {
@@ -37,6 +38,9 @@ class WaveformRefresher {
                             amplitude: floats.slice(floats.length / 2, floats.length),
                         }
                         this.fetching = false;
+                        if (this.on_refresh) {
+                            this.on_refresh(this.data);
+                        }
                     });
                 }).catch((err) => {
                     console.warn(err);
@@ -45,6 +49,50 @@ class WaveformRefresher {
             }
         }, DATA_REFRESH_INTERVAL);
     }
+
+    on_refresh_data(callback: (data: WaveformData) => void) {
+        this.on_refresh = callback;
+    }
+}
+
+class WaveformInterpolator {
+    private first: WaveformData = { spectrum: new Float32Array(0), amplitude: new Float32Array(0) };
+    private second: WaveformData = { spectrum: new Float32Array(0), amplitude: new Float32Array(0) };
+    private interp: number = 0.0;
+    private refresh_times: number[] = [];
+    private average_time_between_refreshes: number = 0;
+    private last_refresh: number = Date.now();
+
+    feed(data: WaveformData) {
+        this.refresh_times.push(Date.now() - this.last_refresh);
+        this.last_refresh = Date.now();
+        if (this.refresh_times.length > 4) {
+            this.refresh_times.shift();
+        }
+        this.average_time_between_refreshes = this.refresh_times.reduce((a, b) => a + b) / this.refresh_times.length;
+
+        this.first = this.second;
+        this.second = data;
+        this.interp = 0.0;
+    }
+
+    data(): WaveformData {
+        if (this.interp >= 1.0) {
+            return this.second;
+        }
+        const interp = this.interp;
+        const first = this.first;
+        const second = this.second;
+        return {
+            spectrum: first.spectrum.map((v, i) => v * (1.0 - interp) + second.spectrum[i] * interp),
+            amplitude: first.amplitude.map((v, i) => v * (1.0 - interp) + second.amplitude[i] * interp),
+        }
+    }
+
+    update(time_delta_millis: number) {
+        const time_delta = time_delta_millis / 1000.0;
+        this.interp += time_delta * (this.average_time_between_refreshes / 30.0);
+    }
 }
 
 export class Waveform {
@@ -52,30 +100,38 @@ export class Waveform {
     private width: number;
     private height: number;
 
-    private waveform_refresher = new WaveformRefresher();
+    private refresher = new WaveformRefresher();
+    private interpolator = new WaveformInterpolator();
+    private last_draw: number = Date.now();
 
     constructor(private canvas: HTMLCanvasElement) {
         this.ctx = canvas.getContext("2d", { alpha: false });
         this.width = canvas.width;
         this.height = canvas.height;
 
+        this.refresher.on_refresh_data((data) => {
+            this.interpolator.feed(data);
+        });
         window.requestAnimationFrame(this.draw.bind(this));
     }
 
     private draw(timestamp: DOMHighResTimeStamp) {
         const c = this.ctx;
-        const refresher = this.waveform_refresher;
-        if (!c || !refresher.data || refresher.data.spectrum.length == 0) {
-            window.requestAnimationFrame(this.draw.bind(this));
+        if (!c) {
+            console.error("no graphics context for the waveform");
             return;
         }
-        const waves = refresher.data;
+
+        const time_delta_millis = timestamp - this.last_draw;
+        this.last_draw = timestamp;
+        this.interpolator.update(time_delta_millis);
+        const waves = this.interpolator.data();
         const length = waves.spectrum.length;
 
         c.clearRect(0, 0, this.canvas.width, this.canvas.height);
 
-        const step = this.width / length;
-        const center_y = this.height * 0.66;
+        const step = Math.round(this.width / length);
+        const center_y = Math.floor(this.height * 0.66);
         for (let i = 0; i < length; i++) {
             let spectrum = waves.spectrum[i];
             let amplitude = waves.amplitude[i];
