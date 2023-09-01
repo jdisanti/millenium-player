@@ -189,7 +189,7 @@ impl SimpleModeUi {
                     FromPlayerMessage::Waveform(waveform) => {
                         let waveform_lock = waveform.lock().unwrap();
                         let mut ui_data_lock = self.ui_data.lock().unwrap();
-                        ui_data_lock.waveform.copy_from(&*waveform_lock);
+                        ui_data_lock.waveform.copy_from(&waveform_lock);
                     }
                 }
             }

@@ -93,7 +93,7 @@ where
 /// This buffer sits between the audio decoder and the audio sink to provide
 /// a consistent format for audio transformations such as resampling, remixing,
 /// and volume adjustment.
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct SourceBuffer {
     sample_rate: SampleRate,
     channels: Vec<Vec<f32>>,
@@ -163,7 +163,7 @@ impl SourceBuffer {
     ///
     /// Panics if the channel index is out of bounds.
     pub fn channel(&self, channel: usize) -> &[f32] {
-        self.channels[channel as usize].as_slice()
+        self.channels[channel].as_slice()
     }
 
     /// Resamples this buffer into a new buffer with the given resampler.

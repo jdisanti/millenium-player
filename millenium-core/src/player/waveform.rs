@@ -19,7 +19,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-const DEFAULT_BINS: usize = 16;
+const DEFAULT_BINS: usize = 24;
 
 #[derive(Debug)]
 pub struct Waveform<const BIN_COUNT: usize = DEFAULT_BINS> {
@@ -150,9 +150,7 @@ impl<const BIN_COUNT: usize> SpectrumCalculator<BIN_COUNT> {
             return false;
         }
 
-        // Convert the sample into i16 format and multiply by the window.
-        // Not doing this results in extremely tiny outputs that the log10 ends up destroying
-        let sample_to_complex = |(s, w)| rustfft::num_complex::Complex::new(32767.0 * s * w, 0.0);
+        let sample_to_complex = |(s, w)| rustfft::num_complex::Complex::new(s * w, 0.0);
 
         // Fill the FFT buffer with the samples, with the window applied.
         self.fft_buffer.clear();
@@ -169,21 +167,23 @@ impl<const BIN_COUNT: usize> SpectrumCalculator<BIN_COUNT> {
                 .iter()
                 .take(self.required_samples / 2 + 1)
                 .copied()
-                .zip(self.fft_window.iter().copied().rev())
+                .zip(self.fft_window.iter().copied().skip(self.fft_buffer.len()))
                 .map(sample_to_complex),
         );
 
         self.fft_plan
             .process_with_scratch(&mut self.fft_buffer, &mut self.fft_scratch);
+        let scale = 1.0 / (self.fft_buffer.len() as f32).sqrt();
         let mut calc_iter = self.output_buffer.iter_mut().zip(
             self.fft_buffer
                 .iter()
                 .rev()
+                .skip(2)
                 .take(BIN_COUNT)
                 // Convert complex to magnitude
-                .map(|c| c.norm_sqr())
-                // Convert magnitude to decibels, and then divide in order to bring it down to 0.0-1.0
-                .map(|s| f32::min(1.0, f32::max(0f32, 10.0 * s.log10()) / 110.0)),
+                .map(|c| c.norm() * scale)
+                // Clamp
+                .map(|s| f32::min(1.0, f32::max(0f32, s))),
         );
         for (out, calc) in &mut calc_iter {
             *out = calc;
@@ -194,6 +194,10 @@ impl<const BIN_COUNT: usize> SpectrumCalculator<BIN_COUNT> {
 
     fn push_source(&mut self, source: &SourceBuffer) {
         self.sample_buffer.extend(source.channel(0).iter().copied());
+        if self.sample_buffer.len() > self.required_samples {
+            self.sample_buffer
+                .drain(..(self.sample_buffer.len() - self.required_samples));
+        }
     }
 
     pub fn copy_latest_waveform_into(&self, waveform: &mut Waveform<BIN_COUNT>) {
@@ -236,7 +240,7 @@ impl<const BIN_COUNT: usize> AmplitudeCalculator<BIN_COUNT> {
             return false;
         }
         let to_process = self.sample_buffer.drain(..self.required_samples);
-        let sum: f32 = to_process.map(|s| s).sum();
+        let sum: f32 = to_process.sum();
         let amplitude = f32::min(1.0, 2.0 * sum / self.required_samples as f32);
         self.push_calculation(amplitude);
         self.last_calculate = Instant::now();
@@ -246,7 +250,7 @@ impl<const BIN_COUNT: usize> AmplitudeCalculator<BIN_COUNT> {
 
     fn push_calculation(&mut self, value: f32) {
         self.output_buffer.rotate_left(1);
-        *self.output_buffer.iter_mut().rev().next().unwrap() = value;
+        *self.output_buffer.iter_mut().next_back().unwrap() = value;
     }
 
     fn push_source(&mut self, source: &SourceBuffer) {

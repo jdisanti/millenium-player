@@ -138,7 +138,7 @@ impl State for StatePlaying {
 
         let waveform_calc = resources.waveform_calculator.as_mut().unwrap();
         let mut waveform_lock = resources.waveform.lock().unwrap();
-        if waveform_calc.waveform_needs_update(&*waveform_lock) {
+        if waveform_calc.waveform_needs_update(&waveform_lock) {
             waveform_calc.copy_latest_waveform_into(&mut *waveform_lock);
             drop(waveform_lock);
             resources.send_message(FromPlayerMessage::Waveform(resources.waveform.clone()));
