@@ -140,7 +140,8 @@ impl SimpleModeUi {
                 self.main_web_view.window().set_visible(true);
                 start_time = None;
             }
-            *control_flow = ControlFlow::WaitUntil(Instant::now() + Duration::from_millis(100));
+            *control_flow =
+                ControlFlow::WaitUntil(Instant::now() + Duration::from_millis(1000 / 60));
 
             match event {
                 Event::LoopDestroyed => {

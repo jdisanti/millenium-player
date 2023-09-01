@@ -12,9 +12,7 @@
 // You should have received a copy of the GNU General Public License along with Millenium Player.
 // If not, see <https://www.gnu.org/licenses/>.
 
-import { IpcAjax, UiData } from "./ipc";
-
-const DATA_REFRESHES_PER_SECOND = 60;
+const DATA_REFRESHES_PER_SECOND = 30;
 const DATA_REFRESH_INTERVAL = 1000 / DATA_REFRESHES_PER_SECOND;
 
 interface WaveformData {
