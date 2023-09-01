@@ -24,6 +24,7 @@ use millenium_core::{
 };
 use std::{
     borrow::Cow,
+    mem::size_of,
     sync::{
         mpsc::{self, Receiver},
         Arc, Mutex,
@@ -321,6 +322,24 @@ fn internal_protocol(
                 Ok(http::Response::builder()
                     .status(200)
                     .header("Content-Type", "application/json")
+                    .body(body.into())
+                    .unwrap())
+            }
+            "/ipc/waveform-data" => {
+                let ui_data_lock = ui_data.lock().unwrap();
+                let waves = &ui_data_lock.waveform;
+                let mut body = Vec::with_capacity(
+                    (waves.spectrum.len() + waves.amplitude.len()) * size_of::<f32>(),
+                );
+                for &spectrum in &waves.spectrum {
+                    body.extend_from_slice(&spectrum.to_ne_bytes()[..]);
+                }
+                for &amplitude in &waves.amplitude {
+                    body.extend_from_slice(&amplitude.to_ne_bytes()[..]);
+                }
+                Ok(http::Response::builder()
+                    .status(200)
+                    .header("Content-Type", "application/octet-stream")
                     .body(body.into())
                     .unwrap())
             }

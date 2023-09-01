@@ -19,7 +19,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-const DEFAULT_BINS: usize = 32;
+const DEFAULT_BINS: usize = 16;
 
 #[derive(Debug)]
 pub struct Waveform<const BIN_COUNT: usize = DEFAULT_BINS> {
@@ -149,15 +149,30 @@ impl<const BIN_COUNT: usize> SpectrumCalculator<BIN_COUNT> {
         if self.sample_buffer.len() < self.required_samples {
             return false;
         }
+
+        // Convert the sample into i16 format and multiply by the window.
+        // Not doing this results in extremely tiny outputs that the log10 ends up destroying
+        let sample_to_complex = |(s, w)| rustfft::num_complex::Complex::new(32767.0 * s * w, 0.0);
+
+        // Fill the FFT buffer with the samples, with the window applied.
         self.fft_buffer.clear();
+        // Drain the first half of the required samples into the FFT buffer
         self.fft_buffer.extend(
             self.sample_buffer
-                .drain(..self.required_samples)
-                .zip(self.fft_window.iter())
-                // Convert the sample into i16 format and multiply by the window.
-                // Not doing this results in extremely tiny outputs that the log10 ends up destroying
-                .map(|(s, w)| rustfft::num_complex::Complex::new(32767.0 * s * w, 0.0)),
+                .drain(..(self.required_samples / 2))
+                .zip(self.fft_window.iter().copied())
+                .map(sample_to_complex),
         );
+        // Copy the second half into the FFT buffer.
+        self.fft_buffer.extend(
+            self.sample_buffer
+                .iter()
+                .take(self.required_samples / 2 + 1)
+                .copied()
+                .zip(self.fft_window.iter().copied().rev())
+                .map(sample_to_complex),
+        );
+
         self.fft_plan
             .process_with_scratch(&mut self.fft_buffer, &mut self.fft_scratch);
         let mut calc_iter = self.output_buffer.iter_mut().zip(

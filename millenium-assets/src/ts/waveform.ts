@@ -14,18 +14,39 @@
 
 import { IpcAjax, UiData } from "./ipc";
 
-const UPDATES_PER_SECOND = 30;
-const UPDATE_INTERVAL = 1000 / UPDATES_PER_SECOND;
-
-const DATA_REFRESHES_PER_SECOND = 10;
+const DATA_REFRESHES_PER_SECOND = 60;
 const DATA_REFRESH_INTERVAL = 1000 / DATA_REFRESHES_PER_SECOND;
 
-const UPDATES_PER_DATA_REFRESH = UPDATES_PER_SECOND / DATA_REFRESHES_PER_SECOND;
-const INTERPOLATION_RATE = (DATA_REFRESH_INTERVAL / UPDATES_PER_DATA_REFRESH) / DATA_REFRESH_INTERVAL;
-
 interface WaveformData {
-    spectrum: number[];
-    amplitude: number[];
+    spectrum: Float32Array;
+    amplitude: Float32Array;
+}
+
+class WaveformRefresher {
+    data: WaveformData | null = null;
+
+    private interval: any;
+    private fetching: boolean = false;
+    constructor() {
+        this.interval = setInterval(() => {
+            if (!this.fetching) {
+                this.fetching = true;
+                fetch("/ipc/waveform-data").then((response) => {
+                    response.arrayBuffer().then((array_buf) => {
+                        const floats = new Float32Array(array_buf, 0, array_buf.byteLength / 4);
+                        this.data = {
+                            spectrum: floats.slice(0, floats.length / 2),
+                            amplitude: floats.slice(floats.length / 2, floats.length),
+                        }
+                        this.fetching = false;
+                    });
+                }).catch((err) => {
+                    console.warn(err);
+                    this.fetching = false;
+                });
+            }
+        }, DATA_REFRESH_INTERVAL);
+    }
 }
 
 export class Waveform {
@@ -33,68 +54,45 @@ export class Waveform {
     private width: number;
     private height: number;
 
-    private waveforms: WaveformData[] = [
-        { spectrum: [], amplitude: [] },
-        { spectrum: [], amplitude: [] },
-    ];
-    private interpolation: number = 0;
-    private interpolation_interval: any;
-    private next_data: UiData | null = null;
-    private next_data_interval: any;
+    private waveform_refresher = new WaveformRefresher();
 
     constructor(private canvas: HTMLCanvasElement) {
-        this.ctx = canvas.getContext("2d");
+        this.ctx = canvas.getContext("2d", { alpha: false });
         this.width = canvas.width;
         this.height = canvas.height;
 
-        this.interpolation_interval = setInterval(() => {
-            this.interpolation = this.interpolation + INTERPOLATION_RATE;
-            if (this.interpolation >= 1) {
-                this.interpolation = 0;
-                this.waveforms[0] = this.waveforms[1];
-                if (this.next_data) {
-                    this.waveforms[1] = {
-                        spectrum: this.next_data.waveform.spectrum,
-                        amplitude: this.next_data.waveform.amplitude,
-                    };
-                }
-            }
-            this.draw();
-        }, UPDATE_INTERVAL);
-
-        this.next_data_interval = setInterval(() => {
-            IpcAjax.get("ui-data").then((data: object) => {
-                this.next_data = data as UiData;
-            });
-        }, DATA_REFRESH_INTERVAL / 2);
+        window.requestAnimationFrame(this.draw.bind(this));
     }
 
-    private draw() {
+    private draw(timestamp: DOMHighResTimeStamp) {
         const c = this.ctx;
-        const waves = this.waveforms;
-        const length = waves[0].spectrum.length;
-        const interp = this.interpolation;
-        if (!c || length != waves[1].spectrum.length) {
+        const refresher = this.waveform_refresher;
+        if (!c || !refresher.data || refresher.data.spectrum.length == 0) {
+            window.requestAnimationFrame(this.draw.bind(this));
             return;
         }
+        const waves = refresher.data;
+        const length = waves.spectrum.length;
 
         c.clearRect(0, 0, this.canvas.width, this.canvas.height);
 
         const step = this.width / length;
         const center_y = this.height * 0.66;
         for (let i = 0; i < length; i++) {
-            let interp_spectrum = waves[0].spectrum[i] * (1 - interp) + waves[1].spectrum[i] * interp;
-            let interp_amplitude = waves[0].amplitude[i] * (1 - interp) + waves[1].amplitude[i] * interp;
+            let spectrum = waves.spectrum[i];
+            let amplitude = waves.amplitude[i];
 
             const x = i * step;
-            let y = center_y - interp_spectrum * (this.height * 0.6);
+            let y = center_y - spectrum * (this.height * 0.6);
             let h = center_y - y;
             draw_choppy_gradient_up(c, x, y, step - 1, h);
 
             y = center_y;
-            h = interp_amplitude * (this.height * 0.25);
+            h = amplitude * (this.height * 0.25);
             draw_choppy_gradient_down(c, x, y, step - 1, h);
         }
+
+        window.requestAnimationFrame(this.draw.bind(this));
     }
 }
 
