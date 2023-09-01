@@ -12,14 +12,87 @@
 // You should have received a copy of the GNU General Public License along with Millenium Player.
 // If not, see <https://www.gnu.org/licenses/>.
 
-import { Message } from "./ipc";
-
-const UPDATES_PER_SECOND = 24;
-const UPDATE_INTERVAL = 1000 / UPDATES_PER_SECOND;
+const DATA_REFRESHES_PER_SECOND = 30;
+const DATA_REFRESH_INTERVAL = 1000 / DATA_REFRESHES_PER_SECOND;
 
 interface WaveformData {
-    spectrum: number[];
-    amplitude: number[];
+    spectrum: Float32Array;
+    amplitude: Float32Array;
+}
+
+class WaveformRefresher {
+    data: WaveformData = { spectrum: new Float32Array(0), amplitude: new Float32Array(0) };
+
+    private interval: any;
+    private fetching: boolean = false;
+    private on_refresh: ((data: WaveformData) => void) | null = null;
+    constructor() {
+        this.interval = setInterval(() => {
+            if (!this.fetching) {
+                this.fetching = true;
+                fetch("/ipc/waveform-data").then((response) => {
+                    response.arrayBuffer().then((array_buf) => {
+                        const floats = new Float32Array(array_buf, 0, array_buf.byteLength / 4);
+                        this.data = {
+                            spectrum: floats.slice(0, floats.length / 2),
+                            amplitude: floats.slice(floats.length / 2, floats.length),
+                        }
+                        this.fetching = false;
+                        if (this.on_refresh) {
+                            this.on_refresh(this.data);
+                        }
+                    });
+                }).catch((err) => {
+                    console.warn(err);
+                    this.fetching = false;
+                });
+            }
+        }, DATA_REFRESH_INTERVAL);
+    }
+
+    on_refresh_data(callback: (data: WaveformData) => void) {
+        this.on_refresh = callback;
+    }
+}
+
+class WaveformInterpolator {
+    private first: WaveformData = { spectrum: new Float32Array(0), amplitude: new Float32Array(0) };
+    private second: WaveformData = { spectrum: new Float32Array(0), amplitude: new Float32Array(0) };
+    private interp: number = 0.0;
+    private refresh_times: number[] = [];
+    private average_time_between_refreshes: number = 0;
+    private last_refresh: number = Date.now();
+
+    feed(data: WaveformData) {
+        this.refresh_times.push(Date.now() - this.last_refresh);
+        this.last_refresh = Date.now();
+        if (this.refresh_times.length > 4) {
+            this.refresh_times.shift();
+        }
+        this.average_time_between_refreshes = this.refresh_times.reduce((a, b) => a + b) / this.refresh_times.length;
+
+        this.first = this.second;
+        this.second = data;
+        this.interp = 0.0;
+    }
+
+    data(): WaveformData {
+        if (this.interp >= 1.0) {
+            return this.second;
+        }
+        const interp = this.interp;
+        const first = this.first;
+        const second = this.second;
+        return {
+            spectrum: first.spectrum.map((v, i) => v * (1.0 - interp) + second.spectrum[i] * interp),
+            amplitude: first.amplitude.map((v, i) => v * (1.0 - interp) + second.amplitude[i] * interp),
+        }
+    }
+
+    update(time_delta_millis: number) {
+        const time_delta = time_delta_millis / 1000.0;
+        this.interp += time_delta * (this.average_time_between_refreshes / 30.0);
+    }
 }
 
 export class Waveform {
@@ -27,58 +100,53 @@ export class Waveform {
     private width: number;
     private height: number;
 
-    private waveforms: WaveformData[] = [
-        { spectrum: [], amplitude: [] },
-        { spectrum: [], amplitude: [] },
-    ];
-    private interpolation: number = 0;
-    private interpolation_interval: any;
+    private refresher = new WaveformRefresher();
+    private interpolator = new WaveformInterpolator();
+    private last_draw: number = Date.now();
 
     constructor(private canvas: HTMLCanvasElement) {
-        this.ctx = canvas.getContext("2d");
+        this.ctx = canvas.getContext("2d", { alpha: false });
         this.width = canvas.width;
         this.height = canvas.height;
 
-        this.interpolation_interval = setInterval(() => {
-            this.interpolation = Math.min(1, this.interpolation + 1 / UPDATES_PER_SECOND);
-            this.draw();
-        }, UPDATE_INTERVAL);
-
-        Message.push_message_handler((msg: Message) => {
-            if (msg.kind == "WaveformData") {
-                this.interpolation = 0;
-                this.waveforms[0] = this.waveforms[1];
-                this.waveforms[1] = msg.data as WaveformData;
-            }
+        this.refresher.on_refresh_data((data) => {
+            this.interpolator.feed(data);
         });
+        window.requestAnimationFrame(this.draw.bind(this));
     }
 
-    private draw() {
+    private draw(timestamp: DOMHighResTimeStamp) {
         const c = this.ctx;
-        const waves = this.waveforms;
-        const length = waves[0].spectrum.length;
-        const interp = this.interpolation;
-        if (!c || length != waves[1].spectrum.length) {
+        if (!c) {
+            console.error("no graphics context for the waveform");
             return;
         }
 
+        const time_delta_millis = timestamp - this.last_draw;
+        this.last_draw = timestamp;
+        this.interpolator.update(time_delta_millis);
+        const waves = this.interpolator.data();
+        const length = waves.spectrum.length;
+
         c.clearRect(0, 0, this.canvas.width, this.canvas.height);
 
-        const step = this.width / length;
-        const center_y = this.height * 0.66;
+        const step = Math.round(this.width / length);
+        const center_y = Math.floor(this.height * 0.66);
         for (let i = 0; i < length; i++) {
-            let interp_spectrum = waves[0].spectrum[i] * (1 - interp) + waves[1].spectrum[i] * interp;
-            let interp_amplitude = waves[0].amplitude[i] * (1 - interp) + waves[1].amplitude[i] * interp;
+            let spectrum = waves.spectrum[i];
+            let amplitude = waves.amplitude[i];
 
             const x = i * step;
-            let y = center_y - interp_spectrum * (this.height * 0.6);
+            let y = center_y - spectrum * (this.height * 0.6);
             let h = center_y - y;
             draw_choppy_gradient_up(c, x, y, step - 1, h);
 
             y = center_y;
-            h = interp_amplitude * (this.height * 0.25);
+            h = amplitude * (this.height * 0.25);
             draw_choppy_gradient_down(c, x, y, step - 1, h);
         }
+
+        window.requestAnimationFrame(this.draw.bind(this));
     }
 }
 

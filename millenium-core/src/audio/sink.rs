@@ -12,7 +12,10 @@
 // You should have received a copy of the GNU General Public License along with Millenium Player.
 // If not, see <https://www.gnu.org/licenses/>.
 
-use super::source::{Resampler, SourceBuffer};
+use super::{
+    source::{Resampler, SourceBuffer},
+    ChannelCount, SampleRate,
+};
 use cpal::{Sample, SampleFormat};
 use rubato::{SincFixedIn, SincInterpolationParameters, SincInterpolationType, WindowFunction};
 use std::{
@@ -29,10 +32,10 @@ const DESIRED_QUEUE_LENGTH: Duration = Duration::from_millis(100);
 
 /// A sink for audio data that sends that data to the audio device.
 pub struct Sink {
-    input_sample_rate: u32,
-    input_channels: usize,
-    output_sample_rate: u32,
-    output_channels: usize,
+    input_sample_rate: SampleRate,
+    input_channels: ChannelCount,
+    output_sample_rate: SampleRate,
+    output_channels: ChannelCount,
     desired_input_frames: usize,
     resampler: Option<RefCell<SincFixedIn<f32>>>,
     input_buffer: Arc<Mutex<SourceBuffer>>,
@@ -43,10 +46,10 @@ pub struct Sink {
 impl Sink {
     /// Creates a new sink.
     pub fn new(
-        input_sample_rate: u32,
-        input_channels: usize,
-        output_sample_rate: u32,
-        output_channels: usize,
+        input_sample_rate: SampleRate,
+        input_channels: ChannelCount,
+        output_sample_rate: SampleRate,
+        output_channels: ChannelCount,
         output_buffer: Arc<Mutex<BoxAudioBuffer>>,
         output_needed_signal: Arc<Receiver<()>>,
     ) -> Self {
@@ -65,7 +68,7 @@ impl Sink {
                         window: WindowFunction::BlackmanHarris2,
                     },
                     CHUNK_SIZE_FRAMES,
-                    output_channels,
+                    output_channels as usize,
                 )
                 .expect("failed to create resampler (this is a bug)"),
             ))
@@ -90,12 +93,12 @@ impl Sink {
     }
 
     /// The expected sample rate of the input.
-    pub fn input_sample_rate(&self) -> u32 {
+    pub fn input_sample_rate(&self) -> SampleRate {
         self.input_sample_rate
     }
 
     /// The expected number of channels in the input.
-    pub fn input_channels(&self) -> usize {
+    pub fn input_channels(&self) -> ChannelCount {
         self.input_channels
     }
 
@@ -106,8 +109,8 @@ impl Sink {
 
     fn convert_chunk(
         resampler: Option<&mut dyn Resampler>,
-        output_sample_rate: u32,
-        output_channels: usize,
+        output_sample_rate: SampleRate,
+        output_channels: ChannelCount,
         chunk: SourceBuffer,
     ) -> SourceBuffer {
         let chunk = chunk.remix(output_channels);

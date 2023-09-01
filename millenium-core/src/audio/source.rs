@@ -30,6 +30,8 @@ use symphonia::core::{
     sample::Sample,
 };
 
+use super::{ChannelCount, SampleRate};
+
 #[derive(Debug, thiserror::Error)]
 pub enum AudioSourceError {
     #[error("failed to load audio stream: {source}")]
@@ -91,17 +93,17 @@ where
 /// This buffer sits between the audio decoder and the audio sink to provide
 /// a consistent format for audio transformations such as resampling, remixing,
 /// and volume adjustment.
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct SourceBuffer {
-    sample_rate: u32,
+    sample_rate: SampleRate,
     channels: Vec<Vec<f32>>,
 }
 impl SourceBuffer {
     /// Creates an empty source buffer.
-    pub fn empty(sample_rate: u32, channels: usize) -> Self {
+    pub fn empty(sample_rate: SampleRate, channels: ChannelCount) -> Self {
         Self {
             sample_rate,
-            channels: vec![Vec::new(); channels],
+            channels: vec![Vec::new(); channels as usize],
         }
     }
 
@@ -143,7 +145,7 @@ impl SourceBuffer {
     }
 
     /// The sample rate of the source buffer.
-    pub fn sample_rate(&self) -> u32 {
+    pub fn sample_rate(&self) -> SampleRate {
         self.sample_rate
     }
 
@@ -153,8 +155,8 @@ impl SourceBuffer {
     }
 
     /// The number of channels in the source buffer.
-    pub fn channel_count(&self) -> usize {
-        self.channels.len()
+    pub fn channel_count(&self) -> ChannelCount {
+        self.channels.len() as ChannelCount
     }
 
     /// Raw samples for the given channel.
@@ -165,7 +167,7 @@ impl SourceBuffer {
     }
 
     /// Resamples this buffer into a new buffer with the given resampler.
-    pub fn resampled(&self, new_sample_rate: u32, resampler: &mut dyn Resampler) -> Self {
+    pub fn resampled(&self, new_sample_rate: SampleRate, resampler: &mut dyn Resampler) -> Self {
         Self {
             sample_rate: new_sample_rate,
             channels: resampler
@@ -175,7 +177,7 @@ impl SourceBuffer {
     }
 
     /// Remixes into a different arrangement of channels in place.
-    pub fn remix(self, new_channels: usize) -> Self {
+    pub fn remix(self, new_channels: ChannelCount) -> Self {
         match self.channel_count().cmp(&new_channels) {
             Ordering::Equal => self,
             Ordering::Less => self.up_mix(new_channels),
@@ -183,7 +185,7 @@ impl SourceBuffer {
         }
     }
 
-    fn up_mix(self, new_channels: usize) -> Self {
+    fn up_mix(self, new_channels: ChannelCount) -> Self {
         // Mono to stereo
         if self.channel_count() == 1 && new_channels == 2 {
             // 10^(dB/20) with dB=-3
@@ -203,7 +205,7 @@ impl SourceBuffer {
         )
     }
 
-    fn down_mix(mut self, new_channels: usize) -> Self {
+    fn down_mix(mut self, new_channels: ChannelCount) -> Self {
         // Stereo to mono
         if self.channel_count() == 2 && new_channels == 1 {
             // 10^(dB/20) with dB=3
@@ -235,15 +237,15 @@ impl SourceBuffer {
         Format: FromSample<f32>,
     {
         let frame_count = self.frame_count();
-        let interleaved_len: usize = frame_count * self.channel_count();
+        let interleaved_len: usize = frame_count * self.channel_count() as usize;
         let start = into.len();
         into.resize(into.len() + interleaved_len, Format::MID);
 
-        for i in 0..self.channel_count() {
+        for i in 0..(self.channel_count() as usize) {
             let mut into_iter = into
                 .iter_mut()
                 .skip(start + i)
-                .step_by(self.channel_count());
+                .step_by(self.channel_count() as usize);
             for &sample in self.channel(i) {
                 *into_iter.next().unwrap() = Format::from_sample(sample);
             }

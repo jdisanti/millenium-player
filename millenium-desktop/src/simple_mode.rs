@@ -18,12 +18,17 @@ use millenium_core::{
     location::Location,
     player::{
         message::{FromPlayerMessage, ToPlayerMessage},
+        waveform::Waveform,
         PlayerThread, PlayerThreadHandle,
     },
 };
 use std::{
     borrow::Cow,
-    sync::mpsc::{self, Receiver},
+    mem::size_of,
+    sync::{
+        mpsc::{self, Receiver},
+        Arc, Mutex,
+    },
     time::{Duration, Instant},
 };
 use tao::{
@@ -37,6 +42,11 @@ struct Playlist {
     current: Option<usize>,
 }
 
+#[derive(Debug, serde::Serialize)]
+struct UiData {
+    waveform: Waveform,
+}
+
 pub struct SimpleModeUi {
     /// MacOS has the special "always at the top" menu bar that needs to get populated.
     /// Menus aren't needed for the other OSes.
@@ -44,17 +54,22 @@ pub struct SimpleModeUi {
     _osx_app_menu: OsxAppMenu,
 
     main_web_view: wry::webview::WebView,
-    event_loop: Option<tao::event_loop::EventLoop<AppEvent>>,
+    event_loop: Option<tao::event_loop::EventLoop<FromUiEvent>>,
 
     player: Option<PlayerThreadHandle>,
-    // TODO receive and handle messages from player thread
-    _player_receiver: Receiver<FromPlayerMessage>,
+    player_receiver: Receiver<FromPlayerMessage>,
     _playlist: Playlist,
+
+    ui_data: Arc<Mutex<UiData>>,
 }
 
 impl SimpleModeUi {
     pub fn new(locations: &[Location]) -> Result<Self, FatalError> {
-        let event_loop: EventLoop<AppEvent> = EventLoopBuilder::with_user_event().build();
+        let ui_data = Arc::new(Mutex::new(UiData {
+            waveform: Waveform::empty(),
+        }));
+
+        let event_loop: EventLoop<FromUiEvent> = EventLoopBuilder::with_user_event().build();
         let main_window = tao::window::WindowBuilder::new()
             .with_title(APP_TITLE)
             .with_decorations(false)
@@ -64,7 +79,8 @@ impl SimpleModeUi {
             .with_visible(false) // start invisible
             .build(&event_loop)
             .map_err(|err| FatalError::new("failed to create window", err))?;
-        let main_web_view = create_webview(main_window, event_loop.create_proxy())?;
+        let main_web_view =
+            create_webview(main_window, event_loop.create_proxy(), ui_data.clone())?;
 
         let filtered_locations: Vec<Location> = locations
             .iter()
@@ -100,8 +116,10 @@ impl SimpleModeUi {
             event_loop: Some(event_loop),
 
             player: Some(player),
-            _player_receiver: player_receiver,
+            player_receiver,
             _playlist: playlist,
+
+            ui_data,
         })
     }
 
@@ -111,7 +129,6 @@ impl SimpleModeUi {
 
         log::info!("starting event loop");
         let mut start_time = Some(Instant::now());
-        let mut last_waveform = Instant::now();
 
         let event_loop = self.event_loop.take().expect("event loop");
         event_loop.run(move |event, _, control_flow| {
@@ -123,7 +140,8 @@ impl SimpleModeUi {
                 self.main_web_view.window().set_visible(true);
                 start_time = None;
             }
-            *control_flow = ControlFlow::WaitUntil(Instant::now() + Duration::from_millis(100));
+            *control_flow =
+                ControlFlow::WaitUntil(Instant::now() + Duration::from_millis(1000 / 60));
 
             match event {
                 Event::LoopDestroyed => {
@@ -134,37 +152,46 @@ impl SimpleModeUi {
                         }
                     }
                 }
-                Event::UserEvent(AppEvent::Quit)
+                Event::UserEvent(FromUiEvent::Quit)
                 | Event::WindowEvent {
                     event: WindowEvent::CloseRequested,
                     ..
                 } => *control_flow = ControlFlow::Exit,
 
-                Event::UserEvent(AppEvent::DragWindowStart) => {
+                Event::UserEvent(FromUiEvent::DragWindowStart) => {
                     self.main_web_view.window().drag_window().unwrap()
                 }
 
-                Event::MainEventsCleared => {
-                    if Instant::now() - last_waveform > Duration::from_millis(100) {
-                        last_waveform = Instant::now();
-                        let _ = self.main_web_view.evaluate_script(&format!(
-                            "millenium.Message.handle('WaveformData', {});",
-                            serde_json::to_string(&AppEvent::WaveformData {
-                                spectrum: vec![
-                                    0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0, 0.9, 0.8,
-                                    0.7, 0.6, 0.5, 0.4, 0.3, 0.2, 0.1
-                                ],
-                                amplitude: vec![
-                                    0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0, 0.9, 0.8,
-                                    0.7, 0.6, 0.5, 0.4, 0.3, 0.2, 0.1
-                                ]
-                            })
-                            .unwrap()
-                        ));
+                _ => (),
+            }
+
+            if let Ok(message) = self.player_receiver.try_recv() {
+                match message {
+                    FromPlayerMessage::AudioDeviceCreationFailed(_err) => {
+                        // TODO
+                    }
+                    FromPlayerMessage::AudioDeviceFailed(_err) => {
+                        // TODO
+                    }
+                    FromPlayerMessage::FailedToDecodeAudio(_err) => {
+                        // TODO
+                    }
+                    FromPlayerMessage::FailedToLoadLocation(_err) => {
+                        // TODO
+                    }
+                    FromPlayerMessage::FinishedTrack => {
+                        let mut ui_data_lock = self.ui_data.lock().unwrap();
+                        ui_data_lock.waveform.copy_from(&Waveform::empty());
+                    }
+                    FromPlayerMessage::MetadataLoaded(_metadata) => {
+                        // TODO
+                    }
+                    FromPlayerMessage::Waveform(waveform) => {
+                        let waveform_lock = waveform.lock().unwrap();
+                        let mut ui_data_lock = self.ui_data.lock().unwrap();
+                        ui_data_lock.waveform.copy_from(&waveform_lock);
                     }
                 }
-
-                _ => (),
             }
 
             if let Err(err) = self.healthcheck() {
@@ -190,15 +217,17 @@ impl SimpleModeUi {
     }
 }
 
-#[derive(Debug, serde::Deserialize, serde::Serialize)]
+#[derive(Debug, serde::Deserialize)]
 #[serde(tag = "kind")]
-enum AppEvent {
+enum FromUiEvent {
     Quit,
     DragWindowStart,
-    WaveformData {
-        spectrum: Vec<f32>,
-        amplitude: Vec<f32>,
-    },
+}
+
+#[derive(Debug, serde::Serialize)]
+#[serde(tag = "kind")]
+enum ToUiEvent {
+    // ...
 }
 
 #[cfg(target_os = "macos")]
@@ -240,7 +269,8 @@ impl OsxAppMenu {
 
 fn create_webview(
     window: tao::window::Window,
-    event_loop_proxy: EventLoopProxy<AppEvent>,
+    event_loop_proxy: EventLoopProxy<FromUiEvent>,
+    ui_data: Arc<Mutex<UiData>>,
 ) -> Result<wry::webview::WebView, FatalError> {
     log::info!(
         "webview version: {}",
@@ -250,9 +280,12 @@ fn create_webview(
         .map_err(|err| FatalError::new("failed to create web view", err))?
         .with_hotkeys_zoom(false)
         .with_download_started_handler(|_,_| false)  // don't allow file downloads
-        .with_custom_protocol("internal".into(), internal_asset)
+        .with_custom_protocol("internal".into(), {
+            let ui_data = ui_data.clone();
+            move |request| internal_protocol(ui_data.clone(), request)
+        })
         .with_ipc_handler(move |_window, message| {
-            match serde_json::from_str::<AppEvent>(&message) {
+            match serde_json::from_str::<FromUiEvent>(&message) {
                 Ok(event) => event_loop_proxy.send_event(event).unwrap(),
                 Err(err) => {
                     log::error!("failed to deserialize IPC message from the webview: {err}\nmessage: {message}")
@@ -272,23 +305,62 @@ fn create_webview(
     Ok(webview)
 }
 
-fn internal_asset(
+fn internal_protocol(
+    ui_data: Arc<Mutex<UiData>>,
     request: &http::Request<Vec<u8>>,
 ) -> Result<http::Response<Cow<'static, [u8]>>, wry::Error> {
+    fn response_404() -> Result<http::Response<Cow<'static, [u8]>>, wry::Error> {
+        let empty = Cow::Borrowed(&[][..]);
+        Ok(http::Response::builder().status(404).body(empty).unwrap())
+    }
+
     let path = request.uri().path();
-    log::info!("loading asset \"{path}\"");
-    match asset(&path[1..]) {
-        Ok(asset) => Ok(http::Response::builder()
-            .status(200)
-            .header("Content-Type", asset.mime)
-            .body(asset.contents)
-            .unwrap()),
-        Err(err) => {
-            log::error!("{err}");
-            Ok(http::Response::builder()
-                .status(404)
-                .body(Cow::Owned(format!("{err}").into_bytes()))
-                .unwrap())
+    if path.starts_with("/ipc/") {
+        match path {
+            "/ipc/ui-data" => {
+                let ui_data_lock = ui_data.lock().unwrap();
+                let body = serde_json::to_vec(&*ui_data_lock).unwrap();
+                Ok(http::Response::builder()
+                    .status(200)
+                    .header("Content-Type", "application/json")
+                    .body(body.into())
+                    .unwrap())
+            }
+            "/ipc/waveform-data" => {
+                let ui_data_lock = ui_data.lock().unwrap();
+                let waves = &ui_data_lock.waveform;
+                let mut body = Vec::with_capacity(
+                    (waves.spectrum.len() + waves.amplitude.len()) * size_of::<f32>(),
+                );
+                for &spectrum in &waves.spectrum {
+                    body.extend_from_slice(&spectrum.to_ne_bytes()[..]);
+                }
+                for &amplitude in &waves.amplitude {
+                    body.extend_from_slice(&amplitude.to_ne_bytes()[..]);
+                }
+                Ok(http::Response::builder()
+                    .status(200)
+                    .header("Content-Type", "application/octet-stream")
+                    .body(body.into())
+                    .unwrap())
+            }
+            _ => {
+                log::error!("unknown IPC request: {path}");
+                response_404()
+            }
+        }
+    } else {
+        log::info!("loading asset \"{path}\"");
+        match asset(&path[1..]) {
+            Ok(asset) => Ok(http::Response::builder()
+                .status(200)
+                .header("Content-Type", asset.mime)
+                .body(asset.contents)
+                .unwrap()),
+            Err(err) => {
+                log::error!("{err}");
+                response_404()
+            }
         }
     }
 }

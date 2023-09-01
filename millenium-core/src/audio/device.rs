@@ -12,12 +12,16 @@
 // You should have received a copy of the GNU General Public License along with Millenium Player.
 // If not, see <https://www.gnu.org/licenses/>.
 
-use super::sink::{AudioBuffer, BoxAudioBuffer, Sink};
+use super::{
+    sink::{AudioBuffer, BoxAudioBuffer, Sink},
+    ChannelCount,
+};
+use crate::audio::SampleRate;
 use cpal::{
     traits::{DeviceTrait, HostTrait, StreamTrait},
     BuildStreamError, Device, DeviceNameError, Host, OutputCallbackInfo, PauseStreamError,
-    PlayStreamError, Sample, SampleFormat, SampleRate, SizedSample, Stream, StreamError,
-    SupportedStreamConfig, SupportedStreamConfigRange, SupportedStreamConfigsError,
+    PlayStreamError, Sample, SampleFormat, SizedSample, Stream, StreamError, SupportedStreamConfig,
+    SupportedStreamConfigRange, SupportedStreamConfigsError,
 };
 use std::{
     cmp::Ordering,
@@ -82,10 +86,10 @@ pub enum AudioDeviceError {
 /// Represents an output device that can play audio.
 pub trait AudioDevice {
     /// Create a sink for the given sample rate and number of channels.
-    fn create_sink(&self, input_sample_rate: u32, input_channels: usize) -> Sink;
+    fn create_sink(&self, input_sample_rate: SampleRate, input_channels: ChannelCount) -> Sink;
 
     /// Returns the sample rate that playback occurs at.
-    fn playback_sample_rate(&self) -> usize;
+    fn playback_sample_rate(&self) -> SampleRate;
 
     /// Returns the amount of audio data consumed in number of frames.
     fn frames_consumed(&self) -> u64;
@@ -151,7 +155,7 @@ impl NullAudioDevice {
         Self {
             config: SupportedStreamConfig::new(
                 2,
-                SampleRate(44100),
+                cpal::SampleRate(44100),
                 cpal::SupportedBufferSize::Unknown,
                 SampleFormat::F32,
             ),
@@ -165,19 +169,19 @@ impl NullAudioDevice {
 }
 
 impl AudioDevice for NullAudioDevice {
-    fn create_sink(&self, input_sample_rate: u32, input_channels: usize) -> Sink {
+    fn create_sink(&self, input_sample_rate: SampleRate, input_channels: ChannelCount) -> Sink {
         let (_, rx) = std::sync::mpsc::channel();
         Sink::new(
             input_sample_rate,
             input_channels,
             self.config.sample_rate().0,
-            self.config.channels() as usize,
+            self.config.channels() as ChannelCount,
             self.output_buffer.clone(),
             Arc::new(rx),
         )
     }
 
-    fn playback_sample_rate(&self) -> usize {
+    fn playback_sample_rate(&self) -> SampleRate {
         44100
     }
 
@@ -376,19 +380,19 @@ impl CpalAudioDevice {
 }
 
 impl AudioDevice for CpalAudioDevice {
-    fn create_sink(&self, input_sample_rate: u32, input_channels: usize) -> Sink {
+    fn create_sink(&self, input_sample_rate: SampleRate, input_channels: ChannelCount) -> Sink {
         Sink::new(
             input_sample_rate,
             input_channels,
             self.config.sample_rate().0,
-            self.config.channels() as usize,
+            self.config.channels() as ChannelCount,
             self.output_buffer.clone(),
             self.output_needed_signal.clone(),
         )
     }
 
-    fn playback_sample_rate(&self) -> usize {
-        self.config.sample_rate().0 as usize
+    fn playback_sample_rate(&self) -> SampleRate {
+        self.config.sample_rate().0 as SampleRate
     }
 
     fn frames_consumed(&self) -> u64 {
@@ -523,7 +527,7 @@ fn config_range_supports_sample_rate(range: &SupportedStreamConfigRange, sample_
 fn select_sample_rate(range: SupportedStreamConfigRange) -> SupportedStreamConfig {
     for &hz in PREFERRED_SAMPLE_RATES {
         if config_range_supports_sample_rate(&range, hz) {
-            return range.with_sample_rate(SampleRate(hz));
+            return range.with_sample_rate(cpal::SampleRate(hz));
         }
     }
     range.with_max_sample_rate()
@@ -603,8 +607,8 @@ mod tests {
         fn cfg(channels: u16) -> SupportedStreamConfigRange {
             SupportedStreamConfigRange::new(
                 channels,
-                SampleRate(44100),
-                SampleRate(44100),
+                cpal::SampleRate(44100),
+                cpal::SampleRate(44100),
                 SupportedBufferSize::Unknown,
                 SampleFormat::F32,
             )
@@ -632,8 +636,8 @@ mod tests {
         fn cfg(format: SampleFormat) -> SupportedStreamConfigRange {
             SupportedStreamConfigRange::new(
                 1,
-                SampleRate(44100),
-                SampleRate(44100),
+                cpal::SampleRate(44100),
+                cpal::SampleRate(44100),
                 SupportedBufferSize::Unknown,
                 format,
             )
@@ -662,8 +666,8 @@ mod tests {
         fn cfg(min_sample_rate: u32, max_sample_rate: u32) -> SupportedStreamConfigRange {
             SupportedStreamConfigRange::new(
                 1,
-                SampleRate(min_sample_rate),
-                SampleRate(max_sample_rate),
+                cpal::SampleRate(min_sample_rate),
+                cpal::SampleRate(max_sample_rate),
                 SupportedBufferSize::Unknown,
                 SampleFormat::F32,
             )
@@ -710,8 +714,8 @@ mod tests {
         fn cfg(channels: u16, minmax: u32, format: SampleFormat) -> SupportedStreamConfigRange {
             SupportedStreamConfigRange::new(
                 channels,
-                SampleRate(minmax),
-                SampleRate(minmax),
+                cpal::SampleRate(minmax),
+                cpal::SampleRate(minmax),
                 SupportedBufferSize::Unknown,
                 format,
             )
@@ -720,19 +724,19 @@ mod tests {
         assert_eq!(None, select_config([].into_iter()).unwrap());
 
         assert_eq!(
-            Some(cfg(2, 44100, F32).with_sample_rate(SampleRate(44100))),
+            Some(cfg(2, 44100, F32).with_sample_rate(cpal::SampleRate(44100))),
             select_config([cfg(5, 44100, F32), cfg(2, 44100, F32), cfg(1, 44100, F32)].into_iter())
                 .unwrap()
         );
 
         assert_eq!(
-            Some(cfg(2, 48000, F32).with_sample_rate(SampleRate(48000))),
+            Some(cfg(2, 48000, F32).with_sample_rate(cpal::SampleRate(48000))),
             select_config([cfg(2, 8000, F32), cfg(2, 96000, F32), cfg(2, 48000, F32)].into_iter())
                 .unwrap()
         );
 
         assert_eq!(
-            Some(cfg(2, 48000, I16).with_sample_rate(SampleRate(48000))),
+            Some(cfg(2, 48000, I16).with_sample_rate(cpal::SampleRate(48000))),
             select_config([cfg(2, 48000, I8), cfg(2, 48000, U32), cfg(2, 48000, I16)].into_iter())
                 .unwrap()
         );

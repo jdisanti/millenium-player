@@ -54,3 +54,17 @@ export class Message {
         }
     }
 }
+
+export interface UiData {
+    waveform: {
+        spectrum: number[],
+        amplitude: number[],
+    }
+}
+
+export class IpcAjax {
+    static async get(path: string): Promise<object> {
+        const response = await fetch(`/ipc/${path}`);
+        return response.json();
+    }
+}
