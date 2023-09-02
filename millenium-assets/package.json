@@ -13,6 +13,11 @@
     "copy": "run-script-os",
     "copy:default": "cp -r static/* build/",
     "copy:win32": "xcopy /e /k /h /i static build",
+    "format": "npm run prettier:fix && npm run lint:fix",
+    "lint": "eslint src/ts",
+    "lint:fix": "npm run lint -- --fix",
+    "prettier": "prettier --check src/ts src/style",
+    "prettier:fix": "npm run prettier -- --write",
     "watch": "npm run clean && npm-watch"
   },
   "watch": {
@@ -46,9 +51,14 @@
   },
   "license": "GPL-3.0",
   "dependencies": {
+    "@typescript-eslint/eslint-plugin": "^6.5.0",
+    "@typescript-eslint/parser": "^6.5.0",
+    "eslint": "^8.48.0",
+    "eslint-config-prettier": "^9.0.0",
     "handlebars": "^4.7.8",
     "less": "^4.2.0",
     "npm-watch": "^0.11.0",
+    "prettier": "^3.0.3",
     "run-script-os": "^1.1.6",
     "ts-node": "^10.9.1",
     "typescript": "^5.2.2",
