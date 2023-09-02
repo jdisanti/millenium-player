@@ -28,9 +28,9 @@
 }
 
 //
-// Windows
+// Windows and Linux
 //
-.target-windows .title-bar {
+.target-windows .title-bar, .target-linux .title-bar {
     @button-width: 48px;
     @button-height: 30px;
     @button-icon-size: 20px;
@@ -71,6 +71,7 @@
         }
         .close {
             display: block;
+            border-radius: 0 16px 0 0;
         }
         .close i {
             position: absolute;
