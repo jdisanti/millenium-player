@@ -21,7 +21,10 @@ interface WaveformData {
 }
 
 class WaveformRefresher {
-    data: WaveformData = { spectrum: new Float32Array(0), amplitude: new Float32Array(0) };
+    data: WaveformData = {
+        spectrum: new Float32Array(0),
+        amplitude: new Float32Array(0),
+    };
 
     private interval: any;
     private fetching: boolean = false;
@@ -30,22 +33,31 @@ class WaveformRefresher {
         this.interval = setInterval(() => {
             if (!this.fetching) {
                 this.fetching = true;
-                fetch("/ipc/waveform-data").then((response) => {
-                    response.arrayBuffer().then((array_buf) => {
-                        const floats = new Float32Array(array_buf, 0, array_buf.byteLength / 4);
-                        this.data = {
-                            spectrum: floats.slice(0, floats.length / 2),
-                            amplitude: floats.slice(floats.length / 2, floats.length),
-                        }
+                fetch("/ipc/waveform-data")
+                    .then((response) => {
+                        response.arrayBuffer().then((array_buf) => {
+                            const floats = new Float32Array(
+                                array_buf,
+                                0,
+                                array_buf.byteLength / 4,
+                            );
+                            this.data = {
+                                spectrum: floats.slice(0, floats.length / 2),
+                                amplitude: floats.slice(
+                                    floats.length / 2,
+                                    floats.length,
+                                ),
+                            };
+                            this.fetching = false;
+                            if (this.on_refresh) {
+                                this.on_refresh(this.data);
+                            }
+                        });
+                    })
+                    .catch((err) => {
+                        console.warn(err);
                         this.fetching = false;
-                        if (this.on_refresh) {
-                            this.on_refresh(this.data);
-                        }
                     });
-                }).catch((err) => {
-                    console.warn(err);
-                    this.fetching = false;
-                });
             }
         }, DATA_REFRESH_INTERVAL);
     }
@@ -56,8 +68,14 @@ class WaveformRefresher {
 }
 
 class WaveformInterpolator {
-    private first: WaveformData = { spectrum: new Float32Array(0), amplitude: new Float32Array(0) };
-    private second: WaveformData = { spectrum: new Float32Array(0), amplitude: new Float32Array(0) };
+    private first: WaveformData = {
+        spectrum: new Float32Array(0),
+        amplitude: new Float32Array(0),
+    };
+    private second: WaveformData = {
+        spectrum: new Float32Array(0),
+        amplitude: new Float32Array(0),
+    };
     private interp: number = 0.0;
     private refresh_times: number[] = [];
     private average_time_between_refreshes: number = 0;
@@ -69,7 +87,9 @@ class WaveformInterpolator {
         if (this.refresh_times.length > 4) {
             this.refresh_times.shift();
         }
-        this.average_time_between_refreshes = this.refresh_times.reduce((a, b) => a + b) / this.refresh_times.length;
+        this.average_time_between_refreshes =
+            this.refresh_times.reduce((a, b) => a + b) /
+            this.refresh_times.length;
 
         this.first = this.second;
         this.second = data;
@@ -84,14 +104,19 @@ class WaveformInterpolator {
         const first = this.first;
         const second = this.second;
         return {
-            spectrum: first.spectrum.map((v, i) => v * (1.0 - interp) + second.spectrum[i] * interp),
-            amplitude: first.amplitude.map((v, i) => v * (1.0 - interp) + second.amplitude[i] * interp),
-        }
+            spectrum: first.spectrum.map(
+                (v, i) => v * (1.0 - interp) + second.spectrum[i] * interp,
+            ),
+            amplitude: first.amplitude.map(
+                (v, i) => v * (1.0 - interp) + second.amplitude[i] * interp,
+            ),
+        };
     }
 
     update(time_delta_millis: number) {
         const time_delta = time_delta_millis / 1000.0;
-        this.interp += time_delta * (this.average_time_between_refreshes / 30.0);
+        this.interp +=
+            time_delta * (this.average_time_between_refreshes / 30.0);
     }
 }
 
@@ -133,8 +158,8 @@ export class Waveform {
         const step = Math.round(this.width / length);
         const center_y = Math.floor(this.height * 0.66);
         for (let i = 0; i < length; i++) {
-            let spectrum = waves.spectrum[i];
-            let amplitude = waves.amplitude[i];
+            const spectrum = waves.spectrum[i];
+            const amplitude = waves.amplitude[i];
 
             const x = i * step;
             let y = center_y - spectrum * (this.height * 0.6);
@@ -150,7 +175,13 @@ export class Waveform {
     }
 }
 
-function draw_choppy_gradient_up(ctx: CanvasRenderingContext2D, x: number, y: number, w: number, h: number) {
+function draw_choppy_gradient_up(
+    ctx: CanvasRenderingContext2D,
+    x: number,
+    y: number,
+    w: number,
+    h: number,
+) {
     const step = h / 4;
     for (let i = 0; i < 4; i++) {
         ctx.fillStyle = `rgba(${255 * ((4 - i) / 4)}, 0, 0)`;
@@ -158,7 +189,13 @@ function draw_choppy_gradient_up(ctx: CanvasRenderingContext2D, x: number, y: nu
     }
 }
 
-function draw_choppy_gradient_down(ctx: CanvasRenderingContext2D, x: number, y: number, w: number, h: number) {
+function draw_choppy_gradient_down(
+    ctx: CanvasRenderingContext2D,
+    x: number,
+    y: number,
+    w: number,
+    h: number,
+) {
     const step = h / 3;
     for (let i = 0; i < 3; i++) {
         ctx.fillStyle = `rgba(${255 * ((i + 1) / 3)}, 0, 0)`;

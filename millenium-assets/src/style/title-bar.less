@@ -30,7 +30,8 @@
 //
 // Windows and Linux
 //
-.target-windows .title-bar, .target-linux .title-bar {
+.target-windows .title-bar,
+.target-linux .title-bar {
     @button-width: 48px;
     @button-height: 30px;
     @button-icon-size: 20px;
@@ -66,8 +67,12 @@
             border: 0;
             transition: background-color 0.2s;
 
-            &:active { background-color: #af2f00 !important; }
-            &:hover { background-color: #ff4500; }
+            &:active {
+                background-color: #af2f00 !important;
+            }
+            &:hover {
+                background-color: #ff4500;
+            }
         }
         .close {
             display: block;
@@ -79,7 +84,7 @@
             left: ((@button-width - @button-icon-size) / 2px);
             width: @button-icon-size;
             height: @button-icon-size;
-            background-color: #FFF;
+            background-color: #fff;
             .mask(url("material-symbols/close.svg") 0 0 / 100% 100%);
         }
     }
@@ -118,9 +123,15 @@
             background-color: #5c5b50;
         }
 
-        .close { background-color: #fc5f57; }
-        .close:active { background-color: #fda09b !important; }
-        .close:hover { background-color: #fc8882; }
+        .close {
+            background-color: #fc5f57;
+        }
+        .close:active {
+            background-color: #fda09b !important;
+        }
+        .close:hover {
+            background-color: #fc8882;
+        }
 
         .close i {
             position: absolute;

@@ -22,7 +22,7 @@ function $all(selector: string): NodeListOf<Element> {
     return document.querySelectorAll(selector);
 }
 
-(function() {
+(function () {
     const w = window as any;
     w.millenium = {
         Message,
@@ -45,6 +45,6 @@ function $all(selector: string): NodeListOf<Element> {
         Message.send("DragWindowStart", null);
     });
 
-    let waveform_canvas = $(".waveform")! as HTMLCanvasElement;
+    const waveform_canvas = $(".waveform")! as HTMLCanvasElement;
     new Waveform(waveform_canvas);
-}());
+})();
