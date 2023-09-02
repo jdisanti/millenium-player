@@ -28,21 +28,12 @@ mod error;
 /// Inter-process communication with the UI's web view.
 mod ipc;
 
-/// Simple audio player mode with no library management features
-mod simple_mode;
+/// Web view UI.
+mod ui;
 
 fn do_main() -> Result<(), FatalError> {
     let mode = args::parse(env::args_os())?;
-    match mode {
-        args::Mode::Simple { locations } => simple_mode::SimpleModeUi::new(&locations)?.run(),
-        args::Mode::Library {
-            storage_path,
-            audio_path,
-        } => {
-            let (_, _) = (storage_path, audio_path);
-            unimplemented!("library mode hasn't been implemented yet")
-        }
-    }
+    ui::Ui::new(mode)?.run();
 }
 
 fn main() {

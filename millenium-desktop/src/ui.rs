@@ -13,6 +13,7 @@
 // If not, see <https://www.gnu.org/licenses/>.
 
 use crate::{
+    args::Mode,
     error::FatalError,
     ipc::to_ui::{InternalProtocol, UiData},
     APP_TITLE,
@@ -43,7 +44,7 @@ struct Playlist {
     current: Option<usize>,
 }
 
-pub struct SimpleModeUi {
+pub struct Ui {
     /// MacOS has the special "always at the top" menu bar that needs to get populated.
     /// Menus aren't needed for the other OSes.
     #[cfg(target_os = "macos")]
@@ -59,8 +60,8 @@ pub struct SimpleModeUi {
     ui_data: Arc<Mutex<UiData>>,
 }
 
-impl SimpleModeUi {
-    pub fn new(locations: &[Location]) -> Result<Self, FatalError> {
+impl Ui {
+    pub fn new(mode: Mode) -> Result<Self, FatalError> {
         let ui_data = Arc::new(Mutex::new(UiData::empty()));
         let to_ui = Arc::new(InternalProtocol::new(ui_data.clone()));
 
@@ -76,26 +77,38 @@ impl SimpleModeUi {
             .map_err(|err| FatalError::new("failed to create window", err))?;
         let main_web_view = create_webview(main_window, event_loop.create_proxy(), to_ui)?;
 
-        let filtered_locations: Vec<Location> = locations
-            .iter()
-            .cloned()
-            .filter(|location| !location.inferred_type().is_unknown())
-            // TODO: remove the following filter and load playlists
-            .filter(|location| !location.inferred_type().is_playlist())
-            .collect();
-        if filtered_locations.is_empty() && !locations.is_empty() {
-            rfd::MessageDialog::new()
-                .set_level(rfd::MessageLevel::Error)
-                .set_title("Error")
-                .set_description("None of the given files are audio or playlist files.")
-                .show();
-        }
+        let playlist = match mode {
+            Mode::Simple { locations } => {
+                let filtered_locations: Vec<Location> = locations
+                    .iter()
+                    .cloned()
+                    .filter(|location| !location.inferred_type().is_unknown())
+                    // TODO: remove the following filter and load playlists
+                    .filter(|location| !location.inferred_type().is_playlist())
+                    .collect();
+                if filtered_locations.is_empty() && !locations.is_empty() {
+                    rfd::MessageDialog::new()
+                        .set_level(rfd::MessageLevel::Error)
+                        .set_title("Error")
+                        .set_description("None of the given files are audio or playlist files.")
+                        .show();
+                }
+                Playlist {
+                    current: filtered_locations.get(0).map(|_| Some(0)).unwrap_or(None),
+                    locations: filtered_locations,
+                }
+            }
+            Mode::Library {
+                storage_path,
+                audio_path,
+            } => {
+                let _ = (storage_path, audio_path);
+                unimplemented!("library mode isn't implemented yet")
+            }
+        };
+
         let (player_sender, player_receiver) = mpsc::channel();
         let player = PlayerThread::spawn(player_sender, None)?;
-        let playlist = Playlist {
-            current: filtered_locations.get(0).map(|_| Some(0)).unwrap_or(None),
-            locations: filtered_locations,
-        };
         if let Some(index) = playlist.current {
             player.send(ToPlayerMessage::LoadAndPlayLocation(
                 playlist.locations[index].clone(),
