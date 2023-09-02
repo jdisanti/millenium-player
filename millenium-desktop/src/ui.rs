@@ -158,6 +158,7 @@ impl Ui {
                             log::error!("{err}");
                         }
                     }
+                    log::info!("bye!");
                 }
                 Event::UserEvent(FromUiEvent::Quit)
                 | Event::WindowEvent {
