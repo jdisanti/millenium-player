@@ -20,10 +20,14 @@ export type MessageHanderId = number;
 export class Message {
     private static next_handler_id: MessageHanderId = 0;
 
-    constructor(public direction: Direction, public kind: string, public data: any) { }
+    constructor(
+        public direction: Direction,
+        public kind: string,
+        public data: any,
+    ) {}
 
     static from_json(json: string): Message {
-        let obj = JSON.parse(json);
+        const obj = JSON.parse(json);
         if (obj.direction || obj.type == undefined || obj.data == undefined) {
             throw new Error(`invalid message: ${json}`);
         }
@@ -39,17 +43,22 @@ export class Message {
         ipc.postMessage(new Message("to_rust", kind, data).to_json());
     }
 
-    private static handlers: { id: MessageHanderId, handler: MessageHandler}[] = [];
+    private static handlers: {
+        id: MessageHanderId;
+        handler: MessageHandler;
+    }[] = [];
     static push_message_handler(handler: MessageHandler): MessageHanderId {
         Message.next_handler_id += 1;
         Message.handlers.push({ id: Message.next_handler_id, handler });
         return Message.next_handler_id;
     }
     static remove_message_handler(id: MessageHanderId) {
-        Message.handlers = Message.handlers.filter((handler) => handler.id != id);
+        Message.handlers = Message.handlers.filter(
+            (handler) => handler.id != id,
+        );
     }
     static handle(kind: string, data: any) {
-        for (let { id, handler } of Message.handlers) {
+        for (const { handler } of Message.handlers) {
             handler(new Message("from_rust", kind, data));
         }
     }
@@ -57,9 +66,9 @@ export class Message {
 
 export interface UiData {
     waveform: {
-        spectrum: number[],
-        amplitude: number[],
-    }
+        spectrum: number[];
+        amplitude: number[];
+    };
 }
 
 export class IpcAjax {

@@ -3,18 +3,21 @@
 setup:
     cd millenium-assets; npm install
 
-build-assets:
+assets-test:
+    cd millenium-assets; npm run prettier && npm run lint
+assets-build:
     cd millenium-assets; npm run build
 
-build: build-assets
-    cargo build --bin millenium-desktop
+build: assets-build rust-build
 
-release: build-assets
+release: assets-build
     cargo build --release --bin millenium-desktop
 
 watch:
     cd millenium-assets; npm run watch
 
+rust-build:
+    cargo build --bin millenium-desktop
 rust-check-fmt:
     cargo fmt --check
 rust-test:
@@ -22,7 +25,7 @@ rust-test:
 rust-clippy:
     cargo clippy --all-features
 
-test: build-assets rust-check-fmt rust-test rust-clippy
+test: assets-test assets-build rust-check-fmt rust-test rust-clippy
 
 run:
     cargo run --bin millenium-desktop -- simple

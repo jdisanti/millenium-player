@@ -33,12 +33,15 @@ jobs:
            libasound2-dev \
            libgtk-3-dev \
            libwebkit2gtk-4.1-dev
-    - name: Code Style
-      run: cargo fmt --check
-    - name: Tests
-      run: cargo test --all-features
-    - name: Clippy
-      run: cargo clippy --all-features
+    - name: Install just
+      uses: taiki-e/install-action@v2
+      with:
+        tool: just
+    - name: Test
+      run: |
+        set -eux
+        just setup
+        just test
 
   test-windows:
     runs-on: windows-latest
