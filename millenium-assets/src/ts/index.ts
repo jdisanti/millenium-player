@@ -18,9 +18,6 @@ import { Waveform } from "./waveform";
 function $(selector: string): HTMLElement | null {
     return document.querySelector(selector);
 }
-function $all(selector: string): NodeListOf<Element> {
-    return document.querySelectorAll(selector);
-}
 
 (function () {
     const w = window as any;

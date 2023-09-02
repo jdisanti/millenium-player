@@ -58,7 +58,7 @@ export class Message {
         );
     }
     static handle(kind: string, data: any) {
-        for (const { id, handler } of Message.handlers) {
+        for (const { handler } of Message.handlers) {
             handler(new Message("from_rust", kind, data));
         }
     }
