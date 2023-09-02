@@ -25,6 +25,9 @@ mod args;
 /// Common error types.
 mod error;
 
+/// Inter-process communication with the UI's web view.
+mod ipc;
+
 /// Simple audio player mode with no library management features
 mod simple_mode;
 

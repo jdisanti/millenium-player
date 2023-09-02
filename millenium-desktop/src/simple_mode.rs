@@ -12,8 +12,11 @@
 // You should have received a copy of the GNU General Public License along with Millenium Player.
 // If not, see <https://www.gnu.org/licenses/>.
 
-use crate::{error::FatalError, APP_TITLE};
-use millenium_assets::asset;
+use crate::{
+    error::FatalError,
+    ipc::to_ui::{InternalProtocol, UiData},
+    APP_TITLE,
+};
 use millenium_core::{
     location::Location,
     player::{
@@ -23,8 +26,6 @@ use millenium_core::{
     },
 };
 use std::{
-    borrow::Cow,
-    mem::size_of,
     sync::{
         mpsc::{self, Receiver},
         Arc, Mutex,
@@ -40,11 +41,6 @@ use wry::webview::webview_version;
 struct Playlist {
     locations: Vec<Location>,
     current: Option<usize>,
-}
-
-#[derive(Debug, serde::Serialize)]
-struct UiData {
-    waveform: Waveform,
 }
 
 pub struct SimpleModeUi {
@@ -65,9 +61,8 @@ pub struct SimpleModeUi {
 
 impl SimpleModeUi {
     pub fn new(locations: &[Location]) -> Result<Self, FatalError> {
-        let ui_data = Arc::new(Mutex::new(UiData {
-            waveform: Waveform::empty(),
-        }));
+        let ui_data = Arc::new(Mutex::new(UiData::empty()));
+        let to_ui = Arc::new(InternalProtocol::new(ui_data.clone()));
 
         let event_loop: EventLoop<FromUiEvent> = EventLoopBuilder::with_user_event().build();
         let main_window = tao::window::WindowBuilder::new()
@@ -79,8 +74,7 @@ impl SimpleModeUi {
             .with_visible(false) // start invisible
             .build(&event_loop)
             .map_err(|err| FatalError::new("failed to create window", err))?;
-        let main_web_view =
-            create_webview(main_window, event_loop.create_proxy(), ui_data.clone())?;
+        let main_web_view = create_webview(main_window, event_loop.create_proxy(), to_ui)?;
 
         let filtered_locations: Vec<Location> = locations
             .iter()
@@ -180,16 +174,16 @@ impl SimpleModeUi {
                         // TODO
                     }
                     FromPlayerMessage::FinishedTrack => {
-                        let mut ui_data_lock = self.ui_data.lock().unwrap();
-                        ui_data_lock.waveform.copy_from(&Waveform::empty());
+                        let mut ui_data = self.ui_data.lock().unwrap();
+                        ui_data.waveform.copy_from(&Waveform::empty());
                     }
                     FromPlayerMessage::MetadataLoaded(_metadata) => {
                         // TODO
                     }
                     FromPlayerMessage::Waveform(waveform) => {
                         let waveform_lock = waveform.lock().unwrap();
-                        let mut ui_data_lock = self.ui_data.lock().unwrap();
-                        ui_data_lock.waveform.copy_from(&waveform_lock);
+                        let mut ui_data = self.ui_data.lock().unwrap();
+                        ui_data.waveform.copy_from(&waveform_lock);
                     }
                 }
             }
@@ -270,7 +264,7 @@ impl OsxAppMenu {
 fn create_webview(
     window: tao::window::Window,
     event_loop_proxy: EventLoopProxy<FromUiEvent>,
-    ui_data: Arc<Mutex<UiData>>,
+    to_ui: Arc<InternalProtocol>,
 ) -> Result<wry::webview::WebView, FatalError> {
     log::info!(
         "webview version: {}",
@@ -281,8 +275,10 @@ fn create_webview(
         .with_hotkeys_zoom(false)
         .with_download_started_handler(|_,_| false)  // don't allow file downloads
         .with_custom_protocol("internal".into(), {
-            let ui_data = ui_data.clone();
-            move |request| internal_protocol(ui_data.clone(), request)
+            move |request| {
+                let to_ui = to_ui.clone();
+                Ok(to_ui.handle_request(request))
+            }
         })
         .with_ipc_handler(move |_window, message| {
             match serde_json::from_str::<FromUiEvent>(&message) {
@@ -303,64 +299,4 @@ fn create_webview(
         .build()
         .map_err(|err| FatalError::new("failed to create web view", err))?;
     Ok(webview)
-}
-
-fn internal_protocol(
-    ui_data: Arc<Mutex<UiData>>,
-    request: &http::Request<Vec<u8>>,
-) -> Result<http::Response<Cow<'static, [u8]>>, wry::Error> {
-    fn response_404() -> Result<http::Response<Cow<'static, [u8]>>, wry::Error> {
-        let empty = Cow::Borrowed(&[][..]);
-        Ok(http::Response::builder().status(404).body(empty).unwrap())
-    }
-
-    let path = request.uri().path();
-    if path.starts_with("/ipc/") {
-        match path {
-            "/ipc/ui-data" => {
-                let ui_data_lock = ui_data.lock().unwrap();
-                let body = serde_json::to_vec(&*ui_data_lock).unwrap();
-                Ok(http::Response::builder()
-                    .status(200)
-                    .header("Content-Type", "application/json")
-                    .body(body.into())
-                    .unwrap())
-            }
-            "/ipc/waveform-data" => {
-                let ui_data_lock = ui_data.lock().unwrap();
-                let waves = &ui_data_lock.waveform;
-                let mut body = Vec::with_capacity(
-                    (waves.spectrum.len() + waves.amplitude.len()) * size_of::<f32>(),
-                );
-                for &spectrum in &waves.spectrum {
-                    body.extend_from_slice(&spectrum.to_ne_bytes()[..]);
-                }
-                for &amplitude in &waves.amplitude {
-                    body.extend_from_slice(&amplitude.to_ne_bytes()[..]);
-                }
-                Ok(http::Response::builder()
-                    .status(200)
-                    .header("Content-Type", "application/octet-stream")
-                    .body(body.into())
-                    .unwrap())
-            }
-            _ => {
-                log::error!("unknown IPC request: {path}");
-                response_404()
-            }
-        }
-    } else {
-        log::info!("loading asset \"{path}\"");
-        match asset(&path[1..]) {
-            Ok(asset) => Ok(http::Response::builder()
-                .status(200)
-                .header("Content-Type", asset.mime)
-                .body(asset.contents)
-                .unwrap()),
-            Err(err) => {
-                log::error!("{err}");
-                response_404()
-            }
-        }
-    }
 }
