@@ -32,15 +32,15 @@ impl MessageHandler {
         use FromUiMessage::*;
         match message {
             PlayCurrent => {
-                if resources.paused {
+                if !resources.playback_status.playing {
                     resources.player().send(ToPlayerMessage::Resume).unwrap();
-                    resources.paused = false;
+                    resources.playback_status.playing = true;
                 }
             }
             PauseCurrent => {
-                if !resources.paused {
+                if resources.playback_status.playing {
                     resources.player().send(ToPlayerMessage::Pause).unwrap();
-                    resources.paused = true;
+                    resources.playback_status.playing = false;
                 }
             }
             StopCurrent | SeekCurrent { .. } | LoadLocations { .. } => unimplemented!(),

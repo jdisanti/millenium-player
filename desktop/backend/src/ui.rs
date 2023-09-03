@@ -26,7 +26,7 @@ use millenium_core::{
     location::Location,
     metadata::Metadata,
     player::{
-        message::{FromPlayerMessage, ToPlayerMessage},
+        message::{FromPlayerMessage, PlaybackStatus, ToPlayerMessage},
         waveform::Waveform,
         PlayerThread, PlayerThreadHandle,
     },
@@ -52,7 +52,7 @@ pub struct UiResources {
     player: Option<PlayerThreadHandle>,
     pub waveform: Waveform,
     pub metadata: Option<Metadata>,
-    pub paused: bool,
+    pub playback_status: PlaybackStatus,
 }
 
 impl UiResources {
@@ -61,7 +61,7 @@ impl UiResources {
             player: None,
             waveform: Waveform::empty(),
             metadata: None,
-            paused: true,
+            playback_status: PlaybackStatus::default(),
         }
     }
 
@@ -248,19 +248,14 @@ impl Ui {
                 FromPlayerMessage::FailedToLoadLocation(_err) => {
                     // TODO
                 }
-                FromPlayerMessage::PausedPlayback => {
-                    resources.paused = true;
+                FromPlayerMessage::PlaybackStatus(status) => {
+                    resources.playback_status = status;
                 }
-                FromPlayerMessage::ResumedPlayback => {
-                    resources.paused = false;
-                }
-                FromPlayerMessage::StartedTrack => {
-                    resources.paused = false;
-                }
+                FromPlayerMessage::StartedTrack => {}
                 FromPlayerMessage::FinishedTrack => {
                     resources.waveform.copy_from(&Waveform::empty());
+                    resources.playback_status = PlaybackStatus::default();
                     resources.metadata = None;
-                    resources.paused = true;
                 }
                 FromPlayerMessage::MetadataLoaded(metadata) => {
                     resources.metadata = Some(metadata);

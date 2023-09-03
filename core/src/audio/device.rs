@@ -29,7 +29,7 @@ use std::{
     sync::{
         atomic::{self, AtomicBool, AtomicU64},
         mpsc::{Receiver, Sender},
-        Arc, Mutex, OnceLock,
+        Arc, Mutex,
     },
     time::Duration,
 };
@@ -444,27 +444,24 @@ fn write_audio_data<S>(
         let _ = output_needed_signal.send(());
     }
 
+    let len_to_consume = usize::min(output_buffer.len(), data.len());
     frames_consumed.fetch_add(
-        output_buffer.len() as u64 / channels as u64,
+        len_to_consume as u64 / channels as u64,
         atomic::Ordering::SeqCst,
     );
-    let output_buffer_len = output_buffer.len();
-    let source = output_buffer.drain(0..usize::min(output_buffer.len(), data.len()));
+    let source = output_buffer.drain(0..len_to_consume);
     for (from, into) in source.zip(data.iter_mut()) {
         *into = from;
     }
     let mut filled_in_silence = false;
-    for into in data.iter_mut().skip(output_buffer_len) {
+    for into in data.iter_mut().skip(len_to_consume) {
         *into = S::EQUILIBRIUM;
         filled_in_silence = true;
     }
     if filled_in_silence {
-        static ONCE: OnceLock<()> = OnceLock::new();
-        ONCE.get_or_init(|| {
-            log::warn!(
-                "filled output device with silence (this is either a performance issue or a bug)"
-            );
-        });
+        log::warn!(
+            "filled output device with silence (this is either a performance issue or a bug)"
+        );
     }
 }
 

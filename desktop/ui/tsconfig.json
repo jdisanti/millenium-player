@@ -1,6 +1,7 @@
 {
-  "files": [
-    "src/ts/index.tsx",
+  "include": [
+    "src/**/*.ts",
+    "src/**/*.tsx",
   ],
   "compilerOptions": {
     /* Visit https://aka.ms/tsconfig to read more about this file */
