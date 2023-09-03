@@ -1726,14 +1726,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "millenium-assets"
-version = "0.1.0"
-dependencies = [
- "log",
- "once_cell",
-]
-
-[[package]]
 name = "millenium-core"
 version = "0.1.0"
 dependencies = [
@@ -1752,7 +1744,15 @@ dependencies = [
 ]
 
 [[package]]
-name = "millenium-desktop"
+name = "millenium-desktop-assets"
+version = "0.1.0"
+dependencies = [
+ "log",
+ "once_cell",
+]
+
+[[package]]
+name = "millenium-desktop-backend"
 version = "0.1.0"
 dependencies = [
  "camino",
@@ -1760,8 +1760,8 @@ dependencies = [
  "dirs",
  "http",
  "log",
- "millenium-assets",
  "millenium-core",
+ "millenium-desktop-assets",
  "muda",
  "pretty_assertions",
  "rfd",

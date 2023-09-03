@@ -54,9 +54,6 @@ const SimplePlayer = (props: { playing: Playing }) => {
             <p>{props.playing.title}</p>
             <p>{props.playing.artist}</p>
             <p>{props.playing.album}</p>
-            <p>
-                {props.playing.position} / {props.playing.duration}
-            </p>
             <ButtonPlay paused={props.playing.paused} />
         </>
     );

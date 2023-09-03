@@ -27,7 +27,7 @@ macro_rules! asset {
             #[cfg(debug_assertions)]
             { crate::asset::Asset::from_path_debug($mime, $path) }
             #[cfg(not(debug_assertions))]
-            { crate::asset::Asset::from_path_release($mime, include_bytes!(concat!("../build/", $path))) }
+            { crate::asset::Asset::from_path_release($mime, include_bytes!(concat!("../../ui/build/", $path))) }
         }
     };
     (pub(crate) $name:ident => $path:literal / $mime:literal / $doc:literal) => {

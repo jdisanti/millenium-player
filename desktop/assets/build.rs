@@ -17,10 +17,14 @@ use std::{
     process::{self, Command, Stdio},
 };
 
+const fn ui_path() -> &'static str {
+    concat!(env!("CARGO_MANIFEST_DIR"), "/../ui")
+}
+
 #[cfg(target_os = "windows")]
 fn npm(args: &[&str]) -> Command {
     let mut command = Command::new("cmd");
-    command.current_dir(env!("CARGO_MANIFEST_DIR"));
+    command.current_dir(ui_path());
     command.stdout(Stdio::inherit());
     command.stderr(Stdio::inherit());
     command
@@ -33,7 +37,7 @@ fn npm(args: &[&str]) -> Command {
 #[cfg(not(target_os = "windows"))]
 fn npm(args: &[&str]) -> Command {
     let mut command = Command::new("npm");
-    command.current_dir(env!("CARGO_MANIFEST_DIR"));
+    command.current_dir(ui_path());
     command.stdout(Stdio::inherit());
     command.stderr(Stdio::inherit());
     command.args(args);
