@@ -16,8 +16,8 @@ use std::borrow::Cow;
 use std::error::Error as StdError;
 use std::fmt;
 
-use millenium_assets::AssetError;
 use millenium_core::player::PlayerThreadError;
+use millenium_desktop_assets::AssetError;
 
 /// A boxed error that is send and sync.
 pub type BoxError = Box<dyn StdError + Send + Sync>;

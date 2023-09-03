@@ -14,23 +14,8 @@
 
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
-use crate::error::FatalError;
+use millenium_desktop_backend::{args, error::FatalError, ui, APP_NAME};
 use std::{env, path::PathBuf};
-
-const APP_TITLE: &str = "Millenium Player";
-const APP_NAME: &str = "millenium-player";
-
-/// Command-line argument parsing.
-mod args;
-
-/// Common error types.
-mod error;
-
-/// Inter-process communication with the UI's web view.
-mod ipc;
-
-/// Web view UI.
-mod ui;
 
 fn do_main() -> Result<(), FatalError> {
     let mode = args::parse(env::args_os())?;

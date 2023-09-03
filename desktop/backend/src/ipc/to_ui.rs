@@ -14,7 +14,7 @@
 
 use crate::ui::{SharedUiResources, UiResources};
 use http::{Request, Response, StatusCode};
-use millenium_assets::asset;
+use millenium_desktop_assets::asset;
 use std::{borrow::Cow, mem::size_of};
 
 pub struct InternalProtocol {

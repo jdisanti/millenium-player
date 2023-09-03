@@ -13,7 +13,7 @@
 # If not, see <https://www.gnu.org/licenses/>.
 
 [package]
-name = "millenium-desktop"
+name = "millenium-desktop-backend"
 version = "0.1.0"
 edition = "2021"
 license = "GPL-3.0"
@@ -27,8 +27,8 @@ clap = { version = "4.3.21", default-features = false, features = ["std", "help"
 dirs = "5.0.1"
 http = "0.2.9"
 log = "0.4.20"
-millenium-assets = { path = "../millenium-assets" }
-millenium-core = { path = "../millenium-core" }
+millenium-desktop-assets = { path = "../assets" }
+millenium-core = { path = "../../core" }
 rfd = "0.11.4"
 serde = { version = "1.0.188", features = ["derive"] }
 serde_json = "1.0.105"

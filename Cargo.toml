@@ -1,8 +1,8 @@
 [workspace]
 members = [
-    "millenium-assets",
-    "millenium-desktop",
-    "millenium-core",
+    "core",
+    "desktop/assets",
+    "desktop/backend",
 ]
 
 [profile.release]

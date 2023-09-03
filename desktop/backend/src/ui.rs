@@ -70,6 +70,12 @@ impl UiResources {
     }
 }
 
+impl Default for UiResources {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 pub type SharedUiResources = Rc<RefCell<UiResources>>;
 
 pub struct Ui {

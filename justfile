@@ -1,25 +1,24 @@
 # This justfile can be used with just: https://crates.io/crates/just
 
 setup:
-    cd millenium-assets; npm install
+    cd desktop/ui; npm install
 
-assets-fix:
-    cd millenium-assets; npm run prettier:fix && npm run lint:fix
-assets-test:
-    cd millenium-assets; npm run prettier && npm run lint
-assets-build:
-    cd millenium-assets; npm run build
+ui-fix:
+    cd desktop/ui; npm run prettier:fix && npm run lint:fix
+ui-test:
+    cd desktop/ui; npm run prettier && npm run lint
+ui-build:
+    cd desktop/ui; npm run build
+ui-watch:
+    cd desktop/ui; npm run watch
 
-build: assets-build rust-build
+build: ui-build rust-build
 
-release: assets-build
-    cargo build --release --bin millenium-desktop
-
-watch:
-    cd millenium-assets; npm run watch
+release: ui-build
+    cargo build --release --bin millenium-player
 
 rust-build:
-    cargo build --bin millenium-desktop
+    cargo build --bin millenium-player
 rust-check-fmt:
     cargo fmt --check
 rust-test:
@@ -27,14 +26,14 @@ rust-test:
 rust-clippy:
     cargo clippy --all-features
 
-test: assets-test assets-build rust-check-fmt rust-test rust-clippy
+test: ui-test ui-build rust-check-fmt rust-test rust-clippy
 
 run:
-    cargo run --bin millenium-desktop -- simple
+    cargo run --bin millenium-player -- simple
 run-hydrate:
-    cargo run --bin millenium-desktop -- simple ./test-data/hydrate/hydrate.mp3
+    cargo run --bin millenium-player -- simple ./test-data/hydrate/hydrate.mp3
 
 clean:
-    rm -rf ./millenium-assets/build/
-    rm -rf ./millenium-assets/node_modules/
+    rm -rf ./desktop/ui/build/
+    rm -rf ./desktop/ui/node_modules/
     rm -rf ./target/
