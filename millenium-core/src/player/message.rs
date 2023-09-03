@@ -17,9 +17,14 @@ use crate::audio::{device::AudioDeviceError, source::AudioSourceError};
 use crate::{location::Location, metadata::Metadata};
 use std::sync::{Arc, Mutex};
 
+#[derive(Debug)]
 pub enum FromPlayerMessage {
     /// This is the loaded track metadata.
     MetadataLoaded(Metadata),
+    PausedPlayback,
+    ResumedPlayback,
+    /// The currently playing track started.
+    StartedTrack,
     /// The currently playing track finished.
     FinishedTrack,
     /// Failed to load location.
@@ -34,6 +39,7 @@ pub enum FromPlayerMessage {
     Waveform(Arc<Mutex<Waveform>>),
 }
 
+#[derive(Debug)]
 pub enum ToPlayerMessage {
     /// The application is shutting down. Exit the player thread.
     Quit,

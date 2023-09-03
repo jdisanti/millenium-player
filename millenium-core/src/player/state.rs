@@ -42,6 +42,8 @@ impl CurrentState {
                 if matches!(self, CurrentState::Playing(_)) {
                     log::info!("pausing playback");
                     let CurrentState::Playing(state) = self else { unreachable!() };
+                    resources.send_message(FromPlayerMessage::PausedPlayback);
+                    resources.device.pause().unwrap();
                     CurrentState::Paused(state)
                 } else {
                     self
@@ -51,6 +53,8 @@ impl CurrentState {
                 if matches!(self, CurrentState::Paused(_)) {
                     log::info!("resuming playback");
                     let CurrentState::Paused(state) = self else { unreachable!() };
+                    resources.send_message(FromPlayerMessage::ResumedPlayback);
+                    resources.device.play().unwrap();
                     CurrentState::Playing(state)
                 } else {
                     self
@@ -182,6 +186,7 @@ impl State for StateLoadLocation {
         let state = if let Some(new_state) = queue_chunks(resources, &mut source) {
             new_state
         } else {
+            resources.send_message(FromPlayerMessage::StartedTrack);
             CurrentState::Playing(StatePlaying { source })
         };
         resources

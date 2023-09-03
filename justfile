@@ -3,6 +3,8 @@
 setup:
     cd millenium-assets; npm install
 
+assets-fix:
+    cd millenium-assets; npm run prettier:fix && npm run lint:fix
 assets-test:
     cd millenium-assets; npm run prettier && npm run lint
 assets-build:

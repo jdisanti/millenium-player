@@ -1,6 +1,7 @@
 {
   "name": "millenium-assets",
   "version": "1.0.0",
+  "license": "GPL-3.0",
   "private": true,
   "scripts": {
     "build": "npm run clean && npm run copy && npm run build-templates && npm run build-ts && npm run build-less",
@@ -43,14 +44,16 @@
       "patterns": [
         "src/ts"
       ],
-      "extensions": "ts"
+      "extensions": [
+        "ts",
+        "tsx"
+      ]
     }
   },
   "watchGlobalConfig": {
     "verbose": true
   },
-  "license": "GPL-3.0",
-  "dependencies": {
+  "devDependencies": {
     "@typescript-eslint/eslint-plugin": "^6.5.0",
     "@typescript-eslint/parser": "^6.5.0",
     "eslint": "^8.48.0",
@@ -58,6 +61,7 @@
     "handlebars": "^4.7.8",
     "less": "^4.2.0",
     "npm-watch": "^0.11.0",
+    "preact": "^10.17.1",
     "prettier": "^3.0.3",
     "run-script-os": "^1.1.6",
     "ts-node": "^10.9.1",

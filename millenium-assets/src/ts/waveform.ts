@@ -12,6 +12,8 @@
 // You should have received a copy of the GNU General Public License along with Millenium Player.
 // If not, see <https://www.gnu.org/licenses/>.
 
+import { IpcFetchInterval } from "./ipc";
+
 const DATA_REFRESHES_PER_SECOND = 30;
 const DATA_REFRESH_INTERVAL = 1000 / DATA_REFRESHES_PER_SECOND;
 
@@ -26,40 +28,27 @@ class WaveformRefresher {
         amplitude: new Float32Array(0),
     };
 
-    private interval: any;
-    private fetching: boolean = false;
-    private on_refresh: ((data: WaveformData) => void) | null = null;
+    private fetcher: IpcFetchInterval;
+    private on_refresh: (data: WaveformData) => void = () => {};
+
     constructor() {
-        this.interval = setInterval(() => {
-            if (!this.fetching) {
-                this.fetching = true;
-                fetch("/ipc/waveform-data")
-                    .then((response) => {
-                        response.arrayBuffer().then((array_buf) => {
-                            const floats = new Float32Array(
-                                array_buf,
-                                0,
-                                array_buf.byteLength / 4,
-                            );
-                            this.data = {
-                                spectrum: floats.slice(0, floats.length / 2),
-                                amplitude: floats.slice(
-                                    floats.length / 2,
-                                    floats.length,
-                                ),
-                            };
-                            this.fetching = false;
-                            if (this.on_refresh) {
-                                this.on_refresh(this.data);
-                            }
-                        });
-                    })
-                    .catch((err) => {
-                        console.warn(err);
-                        this.fetching = false;
-                    });
-            }
-        }, DATA_REFRESH_INTERVAL);
+        this.fetcher = new IpcFetchInterval(
+            DATA_REFRESH_INTERVAL,
+            "/ipc/waveform-data",
+        )
+            .on_success(async (response) => {
+                const buf = await response.arrayBuffer();
+                const vals = new Float32Array(buf, 0, buf.byteLength / 4);
+                this.data = {
+                    spectrum: vals.slice(0, vals.length / 2),
+                    amplitude: vals.slice(vals.length / 2, vals.length),
+                };
+                this.on_refresh(this.data);
+            })
+            .on_failure((err) => {
+                console.warn(err);
+            })
+            .start();
     }
 
     on_refresh_data(callback: (data: WaveformData) => void) {

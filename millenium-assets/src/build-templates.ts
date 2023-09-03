@@ -18,8 +18,10 @@ import * as fs from "fs";
 
 const target_os = (() => {
     switch (process.platform) {
-        case "win32": return "windows";
-        case "darwin": return "macos";
+        case "win32":
+            return "windows";
+        case "darwin":
+            return "macos";
     }
     return "linux";
 })();
@@ -33,14 +35,21 @@ const webview_background_color = (() => {
 
 const data = {
     webview_background_color,
-    target_os
+    target_os,
 };
 
 const files = [
-    { input_name: "src/simple_mode.html.hbs", output_name: "build/simple_mode.html" },
+    { input_name: "src/index.html.hbs", output_name: "build/index.html" },
 ];
 for (const file of files) {
     const template_contents = fs.readFileSync(file.input_name, "utf8");
-    console.log(`rendering ${file.input_name} to ${file.output_name} with ${JSON.stringify(data)}`);
-    fs.writeFileSync(file.output_name, Handlebars.compile(template_contents)(data));
+    console.log(
+        `rendering ${file.input_name} to ${
+            file.output_name
+        } with ${JSON.stringify(data)}`,
+    );
+    fs.writeFileSync(
+        file.output_name,
+        Handlebars.compile(template_contents)(data),
+    );
 }

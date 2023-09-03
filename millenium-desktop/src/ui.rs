@@ -15,11 +15,16 @@
 use crate::{
     args::Mode,
     error::FatalError,
-    ipc::to_ui::{InternalProtocol, UiData},
+    ipc::{
+        from_ui::{FromUiMessage, MessageHandler},
+        to_ui::InternalProtocol,
+    },
     APP_TITLE,
 };
+use camino::Utf8Path;
 use millenium_core::{
     location::Location,
+    metadata::Metadata,
     player::{
         message::{FromPlayerMessage, ToPlayerMessage},
         waveform::Waveform,
@@ -27,22 +32,45 @@ use millenium_core::{
     },
 };
 use std::{
-    sync::{
-        mpsc::{self, Receiver},
-        Arc, Mutex,
-    },
+    cell::RefCell,
+    rc::Rc,
+    sync::mpsc::{self, Receiver},
     time::{Duration, Instant},
 };
 use tao::{
     dpi::{LogicalSize, Size},
     event_loop::{EventLoop, EventLoopBuilder, EventLoopProxy},
 };
-use wry::webview::webview_version;
+use wry::webview::{webview_version, FileDropEvent};
 
 struct Playlist {
     locations: Vec<Location>,
     current: Option<usize>,
 }
+
+pub struct UiResources {
+    player: Option<PlayerThreadHandle>,
+    pub waveform: Waveform,
+    pub metadata: Option<Metadata>,
+    pub paused: bool,
+}
+
+impl UiResources {
+    pub fn new() -> Self {
+        Self {
+            player: None,
+            waveform: Waveform::empty(),
+            metadata: None,
+            paused: true,
+        }
+    }
+
+    pub fn player(&self) -> &PlayerThreadHandle {
+        self.player.as_ref().expect("player should be set by now")
+    }
+}
+
+pub type SharedUiResources = Rc<RefCell<UiResources>>;
 
 pub struct Ui {
     /// MacOS has the special "always at the top" menu bar that needs to get populated.
@@ -51,21 +79,22 @@ pub struct Ui {
     _osx_app_menu: OsxAppMenu,
 
     main_web_view: wry::webview::WebView,
-    event_loop: Option<tao::event_loop::EventLoop<FromUiEvent>>,
+    event_loop: Option<tao::event_loop::EventLoop<FromUiMessage>>,
 
     player: Option<PlayerThreadHandle>,
     player_receiver: Receiver<FromPlayerMessage>,
     _playlist: Playlist,
 
-    ui_data: Arc<Mutex<UiData>>,
+    message_handler: MessageHandler,
+    resources: SharedUiResources,
 }
 
 impl Ui {
     pub fn new(mode: Mode) -> Result<Self, FatalError> {
-        let ui_data = Arc::new(Mutex::new(UiData::empty()));
-        let to_ui = Arc::new(InternalProtocol::new(ui_data.clone()));
+        let resources = Rc::new(RefCell::new(UiResources::new()));
+        let to_ui = Rc::new(InternalProtocol::new(resources.clone()));
 
-        let event_loop: EventLoop<FromUiEvent> = EventLoopBuilder::with_user_event().build();
+        let event_loop: EventLoop<FromUiMessage> = EventLoopBuilder::with_user_event().build();
         let main_window = tao::window::WindowBuilder::new()
             .with_title(APP_TITLE)
             .with_decorations(false)
@@ -114,6 +143,7 @@ impl Ui {
                 playlist.locations[index].clone(),
             ))?;
         }
+        resources.borrow_mut().player = Some(player.weak_clone());
 
         Ok(Self {
             #[cfg(target_os = "macos")]
@@ -126,7 +156,8 @@ impl Ui {
             player_receiver,
             _playlist: playlist,
 
-            ui_data,
+            message_handler: MessageHandler::new(resources.clone()),
+            resources,
         })
     }
 
@@ -160,47 +191,24 @@ impl Ui {
                     }
                     log::info!("bye!");
                 }
-                Event::UserEvent(FromUiEvent::Quit)
+                Event::UserEvent(FromUiMessage::Quit)
                 | Event::WindowEvent {
                     event: WindowEvent::CloseRequested,
                     ..
                 } => *control_flow = ControlFlow::Exit,
 
-                Event::UserEvent(FromUiEvent::DragWindowStart) => {
+                Event::UserEvent(FromUiMessage::DragWindowStart) => {
                     self.main_web_view.window().drag_window().unwrap()
+                }
+
+                Event::UserEvent(message) => {
+                    self.message_handler.handle(message);
                 }
 
                 _ => (),
             }
 
-            if let Ok(message) = self.player_receiver.try_recv() {
-                match message {
-                    FromPlayerMessage::AudioDeviceCreationFailed(_err) => {
-                        // TODO
-                    }
-                    FromPlayerMessage::AudioDeviceFailed(_err) => {
-                        // TODO
-                    }
-                    FromPlayerMessage::FailedToDecodeAudio(_err) => {
-                        // TODO
-                    }
-                    FromPlayerMessage::FailedToLoadLocation(_err) => {
-                        // TODO
-                    }
-                    FromPlayerMessage::FinishedTrack => {
-                        let mut ui_data = self.ui_data.lock().unwrap();
-                        ui_data.waveform.copy_from(&Waveform::empty());
-                    }
-                    FromPlayerMessage::MetadataLoaded(_metadata) => {
-                        // TODO
-                    }
-                    FromPlayerMessage::Waveform(waveform) => {
-                        let waveform_lock = waveform.lock().unwrap();
-                        let mut ui_data = self.ui_data.lock().unwrap();
-                        ui_data.waveform.copy_from(&waveform_lock);
-                    }
-                }
-            }
+            self.handle_player_messages();
 
             if let Err(err) = self.healthcheck() {
                 log::error!("{err}");
@@ -214,6 +222,58 @@ impl Ui {
         });
     }
 
+    fn handle_player_messages(&self) {
+        if let Ok(message) = self.player_receiver.try_recv() {
+            let mut resources = self.resources.borrow_mut();
+            let frequent_message = matches!(&message, &FromPlayerMessage::Waveform(_));
+            if !frequent_message {
+                log::info!("received message from player: {message:?}");
+            }
+            match message {
+                FromPlayerMessage::AudioDeviceCreationFailed(_err) => {
+                    // TODO
+                }
+                FromPlayerMessage::AudioDeviceFailed(_err) => {
+                    // TODO
+                }
+                FromPlayerMessage::FailedToDecodeAudio(_err) => {
+                    // TODO
+                }
+                FromPlayerMessage::FailedToLoadLocation(_err) => {
+                    // TODO
+                }
+                FromPlayerMessage::PausedPlayback => {
+                    resources.paused = true;
+                }
+                FromPlayerMessage::ResumedPlayback => {
+                    resources.paused = false;
+                }
+                FromPlayerMessage::StartedTrack => {
+                    resources.paused = false;
+                }
+                FromPlayerMessage::FinishedTrack => {
+                    resources.waveform.copy_from(&Waveform::empty());
+                    resources.metadata = None;
+                    resources.paused = true;
+                }
+                FromPlayerMessage::MetadataLoaded(metadata) => {
+                    resources.metadata = Some(metadata);
+                }
+                FromPlayerMessage::Waveform(waveform) => {
+                    let waveform_lock = waveform.lock().unwrap();
+                    resources.waveform.copy_from(&waveform_lock);
+                }
+            }
+
+            let _ = resources;
+            if !frequent_message {
+                self.main_web_view
+                    .evaluate_script(r#"millenium.Message.handle("state_updated", null)"#)
+                    .expect("valid script");
+            }
+        }
+    }
+
     fn healthcheck(&mut self) -> Result<(), FatalError> {
         if let Some(player) = self.player.take() {
             match player.healthcheck() {
@@ -223,19 +283,6 @@ impl Ui {
         }
         Ok(())
     }
-}
-
-#[derive(Debug, serde::Deserialize)]
-#[serde(tag = "kind")]
-enum FromUiEvent {
-    Quit,
-    DragWindowStart,
-}
-
-#[derive(Debug, serde::Serialize)]
-#[serde(tag = "kind")]
-enum ToUiEvent {
-    // ...
 }
 
 #[cfg(target_os = "macos")]
@@ -277,8 +324,8 @@ impl OsxAppMenu {
 
 fn create_webview(
     window: tao::window::Window,
-    event_loop_proxy: EventLoopProxy<FromUiEvent>,
-    to_ui: Arc<InternalProtocol>,
+    event_loop_proxy: EventLoopProxy<FromUiMessage>,
+    to_ui: Rc<InternalProtocol>,
 ) -> Result<wry::webview::WebView, FatalError> {
     log::info!(
         "webview version: {}",
@@ -294,19 +341,26 @@ fn create_webview(
                 Ok(to_ui.handle_request(request))
             }
         })
-        .with_ipc_handler(move |_window, message| {
-            match serde_json::from_str::<FromUiEvent>(&message) {
-                Ok(event) => event_loop_proxy.send_event(event).unwrap(),
-                Err(err) => {
-                    log::error!("failed to deserialize IPC message from the webview: {err}\nmessage: {message}")
+        .with_ipc_handler({
+            let proxy = event_loop_proxy.clone();
+            move |_window, message| {
+                match serde_json::from_str::<FromUiMessage>(&message) {
+                    Ok(event) => proxy.send_event(event).unwrap(),
+                    Err(err) => {
+                        log::error!("failed to deserialize IPC message from the webview: {err}\nmessage: {message}")
+                    }
                 }
             }
         })
-        .with_url("internal://localhost/simple_mode.html")
+        .with_url("internal://localhost/index.html")
         .map_err(|err| FatalError::new("failed to set web view URL", err))?
-        .with_file_drop_handler(|_window, event| {
-            // TODO: handle file drop by changing playing media
-            dbg!(event);
+        .with_file_drop_handler(move |_window, event| {
+            if let FileDropEvent::Dropped { paths, .. } = event {
+                let locations = paths.into_iter()
+                    .map(|path| Utf8Path::from_path(&path).unwrap().to_string())
+                    .collect::<Vec<_>>();
+                event_loop_proxy.send_event(FromUiMessage::LoadLocations { locations }).unwrap();
+            }
             true
         })
         .with_transparent(true)

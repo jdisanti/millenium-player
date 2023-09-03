@@ -97,13 +97,13 @@ fn initialize_logging() {
     CombinedLogger::init(loggers).expect("first and only logger init");
 }
 
-fn create_file_logger(
-) -> Result<(Box<dyn simplelog::SharedLogger>, PathBuf), (String, Option<PathBuf>)> {
+type PathedLogger = (Box<dyn simplelog::SharedLogger>, PathBuf);
+fn create_file_logger() -> Result<PathedLogger, (String, Option<PathBuf>)> {
     use simplelog::{LevelFilter, WriteLogger};
     use std::fs::{create_dir_all, File};
 
     let parent_path = dirs::cache_dir()
-        .ok_or_else(|| (format!("failed to locate cache dir"), None))?
+        .ok_or_else(|| ("failed to locate cache dir".to_string(), None))?
         .join(APP_NAME);
     let path = parent_path.join(format!("{APP_NAME}.log"));
     create_dir_all(&parent_path).map_err(|err| {

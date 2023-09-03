@@ -11,3 +11,52 @@
 //
 // You should have received a copy of the GNU General Public License along with Millenium Player.
 // If not, see <https://www.gnu.org/licenses/>.
+
+use millenium_core::player::message::ToPlayerMessage;
+
+use crate::ui::SharedUiResources;
+
+pub struct MessageHandler {
+    resources: SharedUiResources,
+}
+
+impl MessageHandler {
+    pub fn new(resources: SharedUiResources) -> Self {
+        Self { resources }
+    }
+
+    pub fn handle(&self, message: FromUiMessage) {
+        log::info!("received message from UI: {:?}", message);
+
+        let mut resources = self.resources.borrow_mut();
+        use FromUiMessage::*;
+        match message {
+            PlayCurrent => {
+                if resources.paused {
+                    resources.player().send(ToPlayerMessage::Resume).unwrap();
+                    resources.paused = false;
+                }
+            }
+            PauseCurrent => {
+                if !resources.paused {
+                    resources.player().send(ToPlayerMessage::Pause).unwrap();
+                    resources.paused = true;
+                }
+            }
+            StopCurrent | SeekCurrent { .. } | LoadLocations { .. } => unimplemented!(),
+            DragWindowStart | Quit => unreachable!("handled in UI"),
+        }
+    }
+}
+
+#[derive(Debug, serde::Deserialize)]
+#[serde(tag = "kind")]
+pub enum FromUiMessage {
+    Quit,
+    DragWindowStart,
+    PlayCurrent,
+    PauseCurrent,
+    StopCurrent,
+    SeekCurrent { position: usize },
+    LoadLocations { locations: Vec<String> },
+}

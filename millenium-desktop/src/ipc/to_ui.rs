@@ -12,22 +12,18 @@
 // You should have received a copy of the GNU General Public License along with Millenium Player.
 // If not, see <https://www.gnu.org/licenses/>.
 
+use crate::ui::{SharedUiResources, UiResources};
 use http::{Request, Response, StatusCode};
 use millenium_assets::asset;
-use millenium_core::player::waveform::Waveform;
-use std::{
-    borrow::Cow,
-    mem::size_of,
-    sync::{Arc, Mutex},
-};
+use std::{borrow::Cow, mem::size_of};
 
 pub struct InternalProtocol {
-    ui_data: Arc<Mutex<UiData>>,
+    resources: SharedUiResources,
 }
 
 impl InternalProtocol {
-    pub fn new(ui_data: Arc<Mutex<UiData>>) -> Self {
-        Self { ui_data }
+    pub fn new(resources: SharedUiResources) -> Self {
+        Self { resources }
     }
 
     pub fn handle_request(&self, request: &Request<Vec<u8>>) -> http::Response<Cow<'static, [u8]>> {
@@ -60,7 +56,7 @@ impl InternalProtocol {
         request: &Request<Vec<u8>>,
     ) -> Response<Cow<'static, [u8]>> {
         match path {
-            "/ipc/ui-data" => self.handle_ipc_ui_data(request),
+            "/ipc/playing-data" => self.handle_ipc_playing_data(request),
             "/ipc/waveform-data" => self.handle_ipc_waveform_data(request),
             _ => Self::error_not_found(),
         }
@@ -73,9 +69,10 @@ impl InternalProtocol {
             .expect("valid response")
     }
 
-    fn handle_ipc_ui_data(&self, _request: &Request<Vec<u8>>) -> Response<Cow<'static, [u8]>> {
-        let ui_data = self.ui_data.lock().unwrap();
-        let body = serde_json::to_vec(&*ui_data).unwrap();
+    fn handle_ipc_playing_data(&self, _request: &Request<Vec<u8>>) -> Response<Cow<'static, [u8]>> {
+        let resources = self.resources.borrow();
+        let playing = Playing::from(&*resources);
+        let body = serde_json::to_vec(&playing).expect("serializable");
         Response::builder()
             .status(StatusCode::OK)
             .header("Content-Type", "application/json")
@@ -87,8 +84,8 @@ impl InternalProtocol {
         &self,
         _request: &Request<Vec<u8>>,
     ) -> Response<Cow<'static, [u8]>> {
-        let ui_data = self.ui_data.lock().unwrap();
-        let waves = &ui_data.waveform;
+        let resources = self.resources.borrow();
+        let waves = &resources.waveform;
         let mut body = Vec::with_capacity(2 * waves.spectrum.len() * size_of::<f32>());
         copy_f32s_into_ne_bytes(&mut body, &waves.spectrum);
         copy_f32s_into_ne_bytes(&mut body, &waves.amplitude);
@@ -107,14 +104,41 @@ fn copy_f32s_into_ne_bytes(into: &mut Vec<u8>, data: &[f32]) {
 }
 
 #[derive(Debug, serde::Serialize)]
-pub struct UiData {
-    pub waveform: Waveform,
+pub struct Playing<'a> {
+    pub title: Option<&'a str>,
+    pub artist: Option<&'a str>,
+    pub album: Option<&'a str>,
+    pub duration: Option<u32>,
+    pub position: Option<u32>,
+    pub paused: bool,
 }
 
-impl UiData {
+impl Playing<'static> {
     pub fn empty() -> Self {
         Self {
-            waveform: Waveform::empty(),
+            title: None,
+            artist: None,
+            album: None,
+            duration: None,
+            position: None,
+            paused: true,
+        }
+    }
+}
+
+impl<'a> From<&'a UiResources> for Playing<'a> {
+    fn from(resources: &'a UiResources) -> Self {
+        if let Some(metadata) = &resources.metadata {
+            Playing {
+                title: metadata.track_title.as_deref(),
+                artist: metadata.artist.as_deref(),
+                album: metadata.album.as_deref(),
+                duration: None,
+                position: None,
+                paused: resources.paused,
+            }
+        } else {
+            Playing::empty()
         }
     }
 }

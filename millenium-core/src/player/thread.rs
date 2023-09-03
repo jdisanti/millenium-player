@@ -101,6 +101,7 @@ impl PlayerThread {
                 self.to_rx.try_recv().ok()
             };
             if let Some(message) = next_message {
+                log::info!("player received message: {message:?}");
                 state_manager.handle_message(&mut self.resources, message);
             }
             state_manager.update(&mut self.resources);
