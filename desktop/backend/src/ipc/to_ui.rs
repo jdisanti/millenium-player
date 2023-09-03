@@ -14,6 +14,7 @@
 
 use crate::ui::{SharedUiResources, UiResources};
 use http::{Request, Response, StatusCode};
+use millenium_core::player::message::PlaybackStatus;
 use millenium_desktop_assets::asset;
 use std::{borrow::Cow, mem::size_of};
 
@@ -108,9 +109,7 @@ pub struct Playing<'a> {
     pub title: Option<&'a str>,
     pub artist: Option<&'a str>,
     pub album: Option<&'a str>,
-    pub duration: Option<u32>,
-    pub position: Option<u32>,
-    pub paused: bool,
+    pub status: PlaybackStatus,
 }
 
 impl Playing<'static> {
@@ -119,9 +118,7 @@ impl Playing<'static> {
             title: None,
             artist: None,
             album: None,
-            duration: None,
-            position: None,
-            paused: true,
+            status: PlaybackStatus::default(),
         }
     }
 }
@@ -133,9 +130,7 @@ impl<'a> From<&'a UiResources> for Playing<'a> {
                 title: metadata.track_title.as_deref(),
                 artist: metadata.artist.as_deref(),
                 album: metadata.album.as_deref(),
-                duration: None,
-                position: None,
-                paused: resources.paused,
+                status: resources.playback_status,
             }
         } else {
             Playing::empty()

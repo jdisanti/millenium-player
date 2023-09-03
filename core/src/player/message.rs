@@ -21,8 +21,8 @@ use std::sync::{Arc, Mutex};
 pub enum FromPlayerMessage {
     /// This is the loaded track metadata.
     MetadataLoaded(Metadata),
-    PausedPlayback,
-    ResumedPlayback,
+    /// The playback status changed.
+    PlaybackStatus(PlaybackStatus),
     /// The currently playing track started.
     StartedTrack,
     /// The currently playing track finished.
@@ -51,6 +51,13 @@ pub enum ToPlayerMessage {
     Resume,
     /// Stop playback.
     Stop,
+}
+
+#[derive(Clone, Copy, Debug, Default, serde::Serialize)]
+pub struct PlaybackStatus {
+    pub playing: bool,
+    pub position_secs: f64,
+    pub duration_secs: Option<f64>,
 }
 
 #[cfg(test)]

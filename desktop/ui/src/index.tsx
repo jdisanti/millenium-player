@@ -15,34 +15,36 @@
 import { Component, render } from "preact";
 import { IpcFetchInterval, Message } from "./ipc";
 import { Waveform } from "./waveform";
+import { Time } from "./component/time";
 
 interface Playing {
     title?: string;
     artist?: string;
     album?: string;
-    duration?: number;
-    position?: number;
-    paused: boolean;
+    status: {
+        playing: boolean;
+        position_secs: number;
+        duration_secs?: number;
+    };
 }
 
-const ButtonPlay = (props: { paused: boolean }) => {
+const ButtonPlay = (props: { playing: boolean }) => {
     const play = Message.send.bind(null, "PlayCurrent", null);
     const pause = Message.send.bind(null, "PauseCurrent", null);
-    console.log(props);
-    if (props.paused) {
-        return (
-            <button
-                onClick={play}
-                class="media-control media-control-play"
-                dangerouslySetInnerHTML={{ __html: "&#x23F5;" }}
-            ></button>
-        );
-    } else {
+    if (props.playing) {
         return (
             <button
                 onClick={pause}
                 class="media-control media-control-pause"
                 dangerouslySetInnerHTML={{ __html: "&#x23F8;" }}
+            ></button>
+        );
+    } else {
+        return (
+            <button
+                onClick={play}
+                class="media-control media-control-play"
+                dangerouslySetInnerHTML={{ __html: "&#x23F5;" }}
             ></button>
         );
     }
@@ -51,10 +53,16 @@ const ButtonPlay = (props: { paused: boolean }) => {
 const SimplePlayer = (props: { playing: Playing }) => {
     return (
         <>
-            <p>{props.playing.title}</p>
-            <p>{props.playing.artist}</p>
+            <p>
+                {props.playing.artist} - {props.playing.title}
+            </p>
             <p>{props.playing.album}</p>
-            <ButtonPlay paused={props.playing.paused} />
+            <p>
+                <Time time_secs={props.playing.status.position_secs} />
+                /
+                <Time time_secs={props.playing.status.duration_secs || 0} />
+            </p>
+            <ButtonPlay playing={props.playing.status.playing} />
         </>
     );
 };
@@ -69,7 +77,7 @@ class App extends Component<object, AppState> {
     constructor() {
         super();
         this.state = {
-            playing: { paused: true },
+            playing: { status: { playing: false, position_secs: 0 } },
         };
     }
 

@@ -13,12 +13,17 @@
 // If not, see <https://www.gnu.org/licenses/>.
 
 use super::{
-    message::ToPlayerMessage, thread::PlayerThreadResources, waveform::WaveformCalculator,
+    message::{PlaybackStatus, ToPlayerMessage},
+    thread::PlayerThreadResources,
+    waveform::WaveformCalculator,
 };
 use crate::{
     audio::source::AudioDecoderSource, location::Location, player::message::FromPlayerMessage,
 };
-use std::{mem, time::Duration};
+use std::{
+    mem,
+    time::{Duration, Instant},
+};
 
 trait State {
     fn update(self, resources: &mut PlayerThreadResources) -> CurrentState;
@@ -39,12 +44,8 @@ impl CurrentState {
         match message {
             ToPlayerMessage::Quit => CurrentState::Quit,
             ToPlayerMessage::Pause => {
-                if matches!(self, CurrentState::Playing(_)) {
-                    log::info!("pausing playback");
-                    let CurrentState::Playing(state) = self else { unreachable!() };
-                    resources.send_message(FromPlayerMessage::PausedPlayback);
-                    resources.device.pause().unwrap();
-                    CurrentState::Paused(state)
+                if let CurrentState::Playing(state) = self {
+                    state.transition_to_pause_state(resources)
                 } else {
                     self
                 }
@@ -53,7 +54,6 @@ impl CurrentState {
                 if matches!(self, CurrentState::Paused(_)) {
                     log::info!("resuming playback");
                     let CurrentState::Paused(state) = self else { unreachable!() };
-                    resources.send_message(FromPlayerMessage::ResumedPlayback);
                     resources.device.play().unwrap();
                     CurrentState::Playing(state)
                 } else {
@@ -134,6 +134,30 @@ impl StateManager {
 
 struct StatePlaying {
     source: AudioDecoderSource,
+    status: PlaybackStatus,
+    last_refresh_sent: Instant,
+}
+
+impl StatePlaying {
+    fn new(source: AudioDecoderSource) -> Self {
+        Self {
+            source,
+            status: PlaybackStatus {
+                playing: true,
+                position_secs: 0.0,
+                duration_secs: None,
+            },
+            last_refresh_sent: Instant::now() - Duration::from_secs(2),
+        }
+    }
+
+    fn transition_to_pause_state(mut self, resources: &PlayerThreadResources) -> CurrentState {
+        log::info!("pausing playback");
+        self.status.playing = false;
+        resources.send_message(FromPlayerMessage::PlaybackStatus(self.status));
+        resources.device.pause().unwrap();
+        CurrentState::Paused(self)
+    }
 }
 
 impl State for StatePlaying {
@@ -151,6 +175,23 @@ impl State for StatePlaying {
         let next_state = if let Some(new_state) = maybe_next_state {
             new_state
         } else {
+            if Instant::now() - self.last_refresh_sent >= Duration::from_secs(1) {
+                self.status.playing = true;
+
+                let (frames_consumed, sample_rate) = (
+                    resources.device.frames_consumed() as f64,
+                    resources.device.playback_sample_rate() as f64,
+                );
+                self.status.position_secs = frames_consumed / sample_rate;
+
+                let frame_count = self.source.frame_count();
+                if self.status.duration_secs.is_none() && frame_count.is_some() {
+                    self.status.duration_secs = frame_count.map(|fc| fc as f64 / sample_rate);
+                }
+
+                resources.send_message(FromPlayerMessage::PlaybackStatus(self.status));
+                self.last_refresh_sent = Instant::now();
+            }
             CurrentState::Playing(self)
         };
         if let Some(sink) = resources.current_sink.as_ref() {
@@ -187,12 +228,11 @@ impl State for StateLoadLocation {
             new_state
         } else {
             resources.send_message(FromPlayerMessage::StartedTrack);
-            CurrentState::Playing(StatePlaying { source })
+            CurrentState::Playing(StatePlaying::new(source))
         };
-        resources
-            .device
-            .play()
-            .expect("failed to pause audio stream");
+        let device = &resources.device;
+        device.reset_frames_consumed();
+        device.play().expect("failed to pause audio stream");
         state
     }
 }

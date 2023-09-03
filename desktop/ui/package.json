@@ -5,7 +5,7 @@
   "private": true,
   "scripts": {
     "build": "npm run clean && npm run copy && npm run build-templates && npm run build-ts && npm run build-less",
-    "build-templates": "npx ts-node src/build-templates.ts",
+    "build-templates": "npx ts-node scripts/build-templates.ts",
     "build-less": "npx lessc src/style/index.less build/style.css",
     "build-ts": "npx tsc && npx webpack",
     "clean": "run-script-os",
@@ -15,9 +15,9 @@
     "copy:default": "cp -r static/* build/",
     "copy:win32": "xcopy /e /k /h /i static build",
     "format": "npm run prettier:fix && npm run lint:fix",
-    "lint": "npx eslint src/ts",
+    "lint": "npx eslint src",
     "lint:fix": "npm run lint -- --fix",
-    "prettier": "npx prettier --check src/ts src/style",
+    "prettier": "npx prettier --check src",
     "prettier:fix": "npm run prettier -- --write",
     "watch": "npm run clean && npm-watch"
   },
@@ -42,7 +42,7 @@
     },
     "build-ts": {
       "patterns": [
-        "src/ts"
+        "src"
       ],
       "extensions": [
         "ts",

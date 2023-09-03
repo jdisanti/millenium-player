@@ -299,6 +299,7 @@ pub struct AudioDecoderSource {
     reader: Box<dyn FormatReader>,
     decoder: Box<dyn Decoder>,
     metadata: Option<Metadata>,
+    frame_count: Option<u64>,
 }
 
 impl AudioDecoderSource {
@@ -310,18 +311,25 @@ impl AudioDecoderSource {
             reader,
             decoder,
             metadata,
+            frame_count,
         } = load_stream(&location, None)?;
         Ok(Self {
             _location: location,
             reader,
             decoder,
             metadata,
+            frame_count,
         })
     }
 
     /// The metadata from the tags on this source.
     pub fn metadata(&self) -> Option<&Metadata> {
         self.metadata.as_ref()
+    }
+
+    /// The number of frames this stream contains, if available.
+    pub fn frame_count(&self) -> Option<u64> {
+        self.frame_count
     }
 
     /// Retrieve and decode the next chunk of audio data.
@@ -350,6 +358,7 @@ struct Stream {
     reader: Box<dyn FormatReader>,
     decoder: Box<dyn Decoder>,
     metadata: Option<Metadata>,
+    frame_count: Option<u64>,
 }
 
 fn load_stream(
@@ -405,6 +414,7 @@ fn load_stream(
         .format
         .default_track()
         .ok_or(AudioSourceError::SourceHadNoAudioTracks)?;
+    let frame_count = track.codec_params.n_frames;
 
     let decoder = codecs
         .make(&track.codec_params, &DecoderOptions { verify: true })
@@ -414,5 +424,6 @@ fn load_stream(
         reader: format.format,
         decoder,
         metadata,
+        frame_count,
     })
 }
