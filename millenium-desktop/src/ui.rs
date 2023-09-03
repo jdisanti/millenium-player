@@ -12,10 +12,19 @@
 // You should have received a copy of the GNU General Public License along with Millenium Player.
 // If not, see <https://www.gnu.org/licenses/>.
 
-use crate::{error::FatalError, APP_TITLE};
-use millenium_assets::asset;
+use crate::{
+    args::Mode,
+    error::FatalError,
+    ipc::{
+        from_ui::{FromUiMessage, MessageHandler},
+        to_ui::InternalProtocol,
+    },
+    APP_TITLE,
+};
+use camino::Utf8Path;
 use millenium_core::{
     location::Location,
+    metadata::Metadata,
     player::{
         message::{FromPlayerMessage, ToPlayerMessage},
         waveform::Waveform,
@@ -23,53 +32,69 @@ use millenium_core::{
     },
 };
 use std::{
-    borrow::Cow,
-    mem::size_of,
-    sync::{
-        mpsc::{self, Receiver},
-        Arc, Mutex,
-    },
+    cell::RefCell,
+    rc::Rc,
+    sync::mpsc::{self, Receiver},
     time::{Duration, Instant},
 };
 use tao::{
     dpi::{LogicalSize, Size},
     event_loop::{EventLoop, EventLoopBuilder, EventLoopProxy},
 };
-use wry::webview::webview_version;
+use wry::webview::{webview_version, FileDropEvent};
 
 struct Playlist {
     locations: Vec<Location>,
     current: Option<usize>,
 }
 
-#[derive(Debug, serde::Serialize)]
-struct UiData {
-    waveform: Waveform,
+pub struct UiResources {
+    player: Option<PlayerThreadHandle>,
+    pub waveform: Waveform,
+    pub metadata: Option<Metadata>,
+    pub paused: bool,
 }
 
-pub struct SimpleModeUi {
+impl UiResources {
+    pub fn new() -> Self {
+        Self {
+            player: None,
+            waveform: Waveform::empty(),
+            metadata: None,
+            paused: true,
+        }
+    }
+
+    pub fn player(&self) -> &PlayerThreadHandle {
+        self.player.as_ref().expect("player should be set by now")
+    }
+}
+
+pub type SharedUiResources = Rc<RefCell<UiResources>>;
+
+pub struct Ui {
     /// MacOS has the special "always at the top" menu bar that needs to get populated.
     /// Menus aren't needed for the other OSes.
     #[cfg(target_os = "macos")]
     _osx_app_menu: OsxAppMenu,
 
     main_web_view: wry::webview::WebView,
-    event_loop: Option<tao::event_loop::EventLoop<FromUiEvent>>,
+    event_loop: Option<tao::event_loop::EventLoop<FromUiMessage>>,
 
     player: Option<PlayerThreadHandle>,
     player_receiver: Receiver<FromPlayerMessage>,
     _playlist: Playlist,
 
-    ui_data: Arc<Mutex<UiData>>,
+    message_handler: MessageHandler,
+    resources: SharedUiResources,
 }
 
-impl SimpleModeUi {
-    pub fn new(locations: &[Location]) -> Result<Self, FatalError> {
-        let ui_data = Arc::new(Mutex::new(UiData {
-            waveform: Waveform::empty(),
-        }));
+impl Ui {
+    pub fn new(mode: Mode) -> Result<Self, FatalError> {
+        let resources = Rc::new(RefCell::new(UiResources::new()));
+        let to_ui = Rc::new(InternalProtocol::new(resources.clone()));
 
-        let event_loop: EventLoop<FromUiEvent> = EventLoopBuilder::with_user_event().build();
+        let event_loop: EventLoop<FromUiMessage> = EventLoopBuilder::with_user_event().build();
         let main_window = tao::window::WindowBuilder::new()
             .with_title(APP_TITLE)
             .with_decorations(false)
@@ -79,34 +104,46 @@ impl SimpleModeUi {
             .with_visible(false) // start invisible
             .build(&event_loop)
             .map_err(|err| FatalError::new("failed to create window", err))?;
-        let main_web_view =
-            create_webview(main_window, event_loop.create_proxy(), ui_data.clone())?;
+        let main_web_view = create_webview(main_window, event_loop.create_proxy(), to_ui)?;
 
-        let filtered_locations: Vec<Location> = locations
-            .iter()
-            .cloned()
-            .filter(|location| !location.inferred_type().is_unknown())
-            // TODO: remove the following filter and load playlists
-            .filter(|location| !location.inferred_type().is_playlist())
-            .collect();
-        if filtered_locations.is_empty() && !locations.is_empty() {
-            rfd::MessageDialog::new()
-                .set_level(rfd::MessageLevel::Error)
-                .set_title("Error")
-                .set_description("None of the given files are audio or playlist files.")
-                .show();
-        }
+        let playlist = match mode {
+            Mode::Simple { locations } => {
+                let filtered_locations: Vec<Location> = locations
+                    .iter()
+                    .cloned()
+                    .filter(|location| !location.inferred_type().is_unknown())
+                    // TODO: remove the following filter and load playlists
+                    .filter(|location| !location.inferred_type().is_playlist())
+                    .collect();
+                if filtered_locations.is_empty() && !locations.is_empty() {
+                    rfd::MessageDialog::new()
+                        .set_level(rfd::MessageLevel::Error)
+                        .set_title("Error")
+                        .set_description("None of the given files are audio or playlist files.")
+                        .show();
+                }
+                Playlist {
+                    current: filtered_locations.get(0).map(|_| Some(0)).unwrap_or(None),
+                    locations: filtered_locations,
+                }
+            }
+            Mode::Library {
+                storage_path,
+                audio_path,
+            } => {
+                let _ = (storage_path, audio_path);
+                unimplemented!("library mode isn't implemented yet")
+            }
+        };
+
         let (player_sender, player_receiver) = mpsc::channel();
         let player = PlayerThread::spawn(player_sender, None)?;
-        let playlist = Playlist {
-            current: filtered_locations.get(0).map(|_| Some(0)).unwrap_or(None),
-            locations: filtered_locations,
-        };
         if let Some(index) = playlist.current {
             player.send(ToPlayerMessage::LoadAndPlayLocation(
                 playlist.locations[index].clone(),
             ))?;
         }
+        resources.borrow_mut().player = Some(player.weak_clone());
 
         Ok(Self {
             #[cfg(target_os = "macos")]
@@ -119,7 +156,8 @@ impl SimpleModeUi {
             player_receiver,
             _playlist: playlist,
 
-            ui_data,
+            message_handler: MessageHandler::new(resources.clone()),
+            resources,
         })
     }
 
@@ -151,48 +189,26 @@ impl SimpleModeUi {
                             log::error!("{err}");
                         }
                     }
+                    log::info!("bye!");
                 }
-                Event::UserEvent(FromUiEvent::Quit)
+                Event::UserEvent(FromUiMessage::Quit)
                 | Event::WindowEvent {
                     event: WindowEvent::CloseRequested,
                     ..
                 } => *control_flow = ControlFlow::Exit,
 
-                Event::UserEvent(FromUiEvent::DragWindowStart) => {
+                Event::UserEvent(FromUiMessage::DragWindowStart) => {
                     self.main_web_view.window().drag_window().unwrap()
+                }
+
+                Event::UserEvent(message) => {
+                    self.message_handler.handle(message);
                 }
 
                 _ => (),
             }
 
-            if let Ok(message) = self.player_receiver.try_recv() {
-                match message {
-                    FromPlayerMessage::AudioDeviceCreationFailed(_err) => {
-                        // TODO
-                    }
-                    FromPlayerMessage::AudioDeviceFailed(_err) => {
-                        // TODO
-                    }
-                    FromPlayerMessage::FailedToDecodeAudio(_err) => {
-                        // TODO
-                    }
-                    FromPlayerMessage::FailedToLoadLocation(_err) => {
-                        // TODO
-                    }
-                    FromPlayerMessage::FinishedTrack => {
-                        let mut ui_data_lock = self.ui_data.lock().unwrap();
-                        ui_data_lock.waveform.copy_from(&Waveform::empty());
-                    }
-                    FromPlayerMessage::MetadataLoaded(_metadata) => {
-                        // TODO
-                    }
-                    FromPlayerMessage::Waveform(waveform) => {
-                        let waveform_lock = waveform.lock().unwrap();
-                        let mut ui_data_lock = self.ui_data.lock().unwrap();
-                        ui_data_lock.waveform.copy_from(&waveform_lock);
-                    }
-                }
-            }
+            self.handle_player_messages();
 
             if let Err(err) = self.healthcheck() {
                 log::error!("{err}");
@@ -206,6 +222,58 @@ impl SimpleModeUi {
         });
     }
 
+    fn handle_player_messages(&self) {
+        if let Ok(message) = self.player_receiver.try_recv() {
+            let mut resources = self.resources.borrow_mut();
+            let frequent_message = matches!(&message, &FromPlayerMessage::Waveform(_));
+            if !frequent_message {
+                log::info!("received message from player: {message:?}");
+            }
+            match message {
+                FromPlayerMessage::AudioDeviceCreationFailed(_err) => {
+                    // TODO
+                }
+                FromPlayerMessage::AudioDeviceFailed(_err) => {
+                    // TODO
+                }
+                FromPlayerMessage::FailedToDecodeAudio(_err) => {
+                    // TODO
+                }
+                FromPlayerMessage::FailedToLoadLocation(_err) => {
+                    // TODO
+                }
+                FromPlayerMessage::PausedPlayback => {
+                    resources.paused = true;
+                }
+                FromPlayerMessage::ResumedPlayback => {
+                    resources.paused = false;
+                }
+                FromPlayerMessage::StartedTrack => {
+                    resources.paused = false;
+                }
+                FromPlayerMessage::FinishedTrack => {
+                    resources.waveform.copy_from(&Waveform::empty());
+                    resources.metadata = None;
+                    resources.paused = true;
+                }
+                FromPlayerMessage::MetadataLoaded(metadata) => {
+                    resources.metadata = Some(metadata);
+                }
+                FromPlayerMessage::Waveform(waveform) => {
+                    let waveform_lock = waveform.lock().unwrap();
+                    resources.waveform.copy_from(&waveform_lock);
+                }
+            }
+
+            let _ = resources;
+            if !frequent_message {
+                self.main_web_view
+                    .evaluate_script(r#"millenium.Message.handle("state_updated", null)"#)
+                    .expect("valid script");
+            }
+        }
+    }
+
     fn healthcheck(&mut self) -> Result<(), FatalError> {
         if let Some(player) = self.player.take() {
             match player.healthcheck() {
@@ -215,19 +283,6 @@ impl SimpleModeUi {
         }
         Ok(())
     }
-}
-
-#[derive(Debug, serde::Deserialize)]
-#[serde(tag = "kind")]
-enum FromUiEvent {
-    Quit,
-    DragWindowStart,
-}
-
-#[derive(Debug, serde::Serialize)]
-#[serde(tag = "kind")]
-enum ToUiEvent {
-    // ...
 }
 
 #[cfg(target_os = "macos")]
@@ -269,8 +324,8 @@ impl OsxAppMenu {
 
 fn create_webview(
     window: tao::window::Window,
-    event_loop_proxy: EventLoopProxy<FromUiEvent>,
-    ui_data: Arc<Mutex<UiData>>,
+    event_loop_proxy: EventLoopProxy<FromUiMessage>,
+    to_ui: Rc<InternalProtocol>,
 ) -> Result<wry::webview::WebView, FatalError> {
     log::info!(
         "webview version: {}",
@@ -281,86 +336,35 @@ fn create_webview(
         .with_hotkeys_zoom(false)
         .with_download_started_handler(|_,_| false)  // don't allow file downloads
         .with_custom_protocol("internal".into(), {
-            let ui_data = ui_data.clone();
-            move |request| internal_protocol(ui_data.clone(), request)
+            move |request| {
+                let to_ui = to_ui.clone();
+                Ok(to_ui.handle_request(request))
+            }
         })
-        .with_ipc_handler(move |_window, message| {
-            match serde_json::from_str::<FromUiEvent>(&message) {
-                Ok(event) => event_loop_proxy.send_event(event).unwrap(),
-                Err(err) => {
-                    log::error!("failed to deserialize IPC message from the webview: {err}\nmessage: {message}")
+        .with_ipc_handler({
+            let proxy = event_loop_proxy.clone();
+            move |_window, message| {
+                match serde_json::from_str::<FromUiMessage>(&message) {
+                    Ok(event) => proxy.send_event(event).unwrap(),
+                    Err(err) => {
+                        log::error!("failed to deserialize IPC message from the webview: {err}\nmessage: {message}")
+                    }
                 }
             }
         })
-        .with_url("internal://localhost/simple_mode.html")
+        .with_url("internal://localhost/index.html")
         .map_err(|err| FatalError::new("failed to set web view URL", err))?
-        .with_file_drop_handler(|_window, event| {
-            // TODO: handle file drop by changing playing media
-            dbg!(event);
+        .with_file_drop_handler(move |_window, event| {
+            if let FileDropEvent::Dropped { paths, .. } = event {
+                let locations = paths.into_iter()
+                    .map(|path| Utf8Path::from_path(&path).unwrap().to_string())
+                    .collect::<Vec<_>>();
+                event_loop_proxy.send_event(FromUiMessage::LoadLocations { locations }).unwrap();
+            }
             true
         })
         .with_transparent(true)
         .build()
         .map_err(|err| FatalError::new("failed to create web view", err))?;
     Ok(webview)
-}
-
-fn internal_protocol(
-    ui_data: Arc<Mutex<UiData>>,
-    request: &http::Request<Vec<u8>>,
-) -> Result<http::Response<Cow<'static, [u8]>>, wry::Error> {
-    fn response_404() -> Result<http::Response<Cow<'static, [u8]>>, wry::Error> {
-        let empty = Cow::Borrowed(&[][..]);
-        Ok(http::Response::builder().status(404).body(empty).unwrap())
-    }
-
-    let path = request.uri().path();
-    if path.starts_with("/ipc/") {
-        match path {
-            "/ipc/ui-data" => {
-                let ui_data_lock = ui_data.lock().unwrap();
-                let body = serde_json::to_vec(&*ui_data_lock).unwrap();
-                Ok(http::Response::builder()
-                    .status(200)
-                    .header("Content-Type", "application/json")
-                    .body(body.into())
-                    .unwrap())
-            }
-            "/ipc/waveform-data" => {
-                let ui_data_lock = ui_data.lock().unwrap();
-                let waves = &ui_data_lock.waveform;
-                let mut body = Vec::with_capacity(
-                    (waves.spectrum.len() + waves.amplitude.len()) * size_of::<f32>(),
-                );
-                for &spectrum in &waves.spectrum {
-                    body.extend_from_slice(&spectrum.to_ne_bytes()[..]);
-                }
-                for &amplitude in &waves.amplitude {
-                    body.extend_from_slice(&amplitude.to_ne_bytes()[..]);
-                }
-                Ok(http::Response::builder()
-                    .status(200)
-                    .header("Content-Type", "application/octet-stream")
-                    .body(body.into())
-                    .unwrap())
-            }
-            _ => {
-                log::error!("unknown IPC request: {path}");
-                response_404()
-            }
-        }
-    } else {
-        log::info!("loading asset \"{path}\"");
-        match asset(&path[1..]) {
-            Ok(asset) => Ok(http::Response::builder()
-                .status(200)
-                .header("Content-Type", asset.mime)
-                .body(asset.contents)
-                .unwrap()),
-            Err(err) => {
-                log::error!("{err}");
-                response_404()
-            }
-        }
-    }
 }

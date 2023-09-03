@@ -76,7 +76,6 @@
         }
         .close {
             display: block;
-            border-radius: 0 16px 0 0;
         }
         .close i {
             position: absolute;
@@ -86,6 +85,14 @@
             height: @button-icon-size;
             background-color: #fff;
             .mask(url("material-symbols/close.svg") 0 0 / 100% 100%);
+        }
+    }
+}
+
+.target-linux .title-bar {
+    .button-bar {
+        .close {
+            border-radius: 0 16px 0 0;
         }
     }
 }

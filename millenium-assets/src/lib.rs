@@ -52,7 +52,7 @@ macro_rules! asset {
 asset! {
     CSS_STYLE => "style.css" / "text/css" / "The CSS file for the UI.",
     FONT_CANTARELL => "cantarell/Cantarell-VF.otf" / "font/otf" / "The main font for the UI.",
-    HTML_SIMPLE_MODE => "simple_mode.html" / "text/html" / "The HTML file for simple mode.",
+    HTML_INDEX => "index.html" / "text/html" / "The root HTML file for the UI.",
     ICON_CIRCLE => "material-symbols/circle.svg" / "image/svg+xml" / "Circle icon used for the traffic light in MacOS.",
     ICON_CLOSE => "material-symbols/close.svg" / "image/svg+xml" / "Close icon used for the close buttons on Windows and MacOS.",
     JS_INDEX => "index.js" / "text/javascript" / "The JavaScript entry point.",

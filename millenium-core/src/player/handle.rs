@@ -14,11 +14,33 @@
 
 use super::{message, PlayerThreadError};
 use std::any::Any;
-use std::sync::mpsc;
+use std::sync::{mpsc, Arc, Weak};
 use std::thread;
 
+enum StrongOrWeak<T> {
+    Strong(Arc<T>),
+    Weak(Weak<T>),
+}
+impl<T> StrongOrWeak<T> {
+    fn strong(value: T) -> Self {
+        Self::Strong(Arc::new(value))
+    }
+    fn weak(value: &StrongOrWeak<T>) -> Self {
+        match value {
+            Self::Strong(value) => Self::Weak(Arc::downgrade(value)),
+            Self::Weak(value) => Self::Weak(value.clone()),
+        }
+    }
+    fn upgrade(&self) -> Option<Arc<T>> {
+        match self {
+            Self::Strong(value) => Some(value.clone()),
+            Self::Weak(value) => value.upgrade(),
+        }
+    }
+}
+
 pub struct PlayerThreadHandle {
-    handle: thread::JoinHandle<()>,
+    handle: StrongOrWeak<thread::JoinHandle<()>>,
     to_tx: mpsc::Sender<message::ToPlayerMessage>,
 }
 
@@ -27,19 +49,30 @@ impl PlayerThreadHandle {
         handle: thread::JoinHandle<()>,
         to_tx: mpsc::Sender<message::ToPlayerMessage>,
     ) -> Self {
-        Self { handle, to_tx }
+        Self {
+            handle: StrongOrWeak::strong(handle),
+            to_tx,
+        }
+    }
+
+    pub fn weak_clone(&self) -> Self {
+        Self {
+            handle: StrongOrWeak::weak(&self.handle),
+            to_tx: self.to_tx.clone(),
+        }
     }
 
     pub fn healthcheck(self) -> Result<Self, PlayerThreadError> {
-        if self.handle.is_finished() {
-            if let Err(err) = self.join() {
-                Err(err)
-            } else {
-                Err(PlayerThreadError::EarlyExit)
+        if let Some(handle) = self.handle.upgrade() {
+            if handle.is_finished() {
+                return if let Err(err) = self.join() {
+                    Err(err)
+                } else {
+                    Err(PlayerThreadError::EarlyExit)
+                };
             }
-        } else {
-            Ok(self)
         }
+        Ok(self)
     }
 
     pub fn send(&self, message: message::ToPlayerMessage) -> Result<(), PlayerThreadError> {
@@ -48,8 +81,18 @@ impl PlayerThreadHandle {
     }
 
     pub fn join(self) -> Result<(), PlayerThreadError> {
-        self.handle.join().map_err(Self::map_join_err)?;
-        Ok(())
+        if let StrongOrWeak::Strong(handle) = self.handle {
+            assert_eq!(
+                1,
+                Arc::strong_count(&handle),
+                "we own self and this struct never gives direct access to the handle, so strong count must be 1"
+            );
+            let handle = Arc::into_inner(handle).expect("checked above");
+            handle.join().map_err(Self::map_join_err)?;
+            Ok(())
+        } else {
+            panic!("attempted to join a weak handle");
+        }
     }
 
     fn map_join_err(panic_reason: Box<dyn Any + Send>) -> PlayerThreadError {

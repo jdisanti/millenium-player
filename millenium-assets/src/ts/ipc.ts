@@ -71,9 +71,58 @@ export interface UiData {
     };
 }
 
-export class IpcAjax {
-    static async get(path: string): Promise<object> {
-        const response = await fetch(`/ipc/${path}`);
-        return response.json();
+export class IpcFetchInterval {
+    private interval_id: any | null = null;
+    private fetching: boolean = false;
+    private fetch_success: (response: Response) => Promise<void> | void =
+        () => {};
+    private fetch_failure: (err: any) => Promise<void> | void = () => {};
+
+    constructor(
+        private interval_millis: number,
+        private url: string,
+    ) {}
+
+    fetch_now() {
+        if (!this.fetching) {
+            this.fetching = true;
+            fetch(this.url)
+                .then((response) => {
+                    this.fetching = false;
+                    return this.fetch_success(response);
+                })
+                .catch((err) => {
+                    this.fetching = false;
+                    return this.fetch_failure(err);
+                });
+        }
+    }
+
+    start(): IpcFetchInterval {
+        if (this.interval_id == null) {
+            this.fetch_now();
+            this.interval_id = setInterval(() => {
+                this.fetch_now();
+            }, this.interval_millis);
+        }
+        return this;
+    }
+
+    stop(): IpcFetchInterval {
+        if (this.interval_id != null) {
+            clearInterval(this.interval_id);
+            this.interval_id = null;
+        }
+        return this;
+    }
+
+    on_success(callback: (response: Response) => void): IpcFetchInterval {
+        this.fetch_success = callback;
+        return this;
+    }
+
+    on_failure(callback: (err: any) => void): IpcFetchInterval {
+        this.fetch_failure = callback;
+        return this;
     }
 }
