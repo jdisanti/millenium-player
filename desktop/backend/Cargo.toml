@@ -44,3 +44,13 @@ pretty_assertions = "1.4.0"
 
 [target.'cfg(target_os = "macos")'.dependencies]
 muda = "0.8.5"
+
+[target.'cfg(target_os = "windows")'.build-dependencies]
+winres = "0.1.12"
+
+[package.metadata.winres]
+FileDescription = "Millenium Player"
+LegalCopyright = "Copyright (C) 2023 John DiSanti"
+OriginalFilename = "millenium-player.exe"
+ProductName = "Millenium Player"
+ProductVersion = "0.1.0"
