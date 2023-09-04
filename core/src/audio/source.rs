@@ -402,6 +402,7 @@ fn load_stream(
         format
             .metadata
             .get()
+            .or_else(|| Some(format.format.metadata()))
             .map(|mut meta| {
                 meta.skip_to_latest();
                 Metadata::try_from(&meta)
