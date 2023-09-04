@@ -15,6 +15,9 @@
 /// Audio support logic.
 pub mod audio;
 
+/// Thread broadcast messaging and subscription.
+pub mod broadcast;
+
 /// Location struct that represents file system or network locations.
 pub mod location;
 
