@@ -12,11 +12,16 @@
 // You should have received a copy of the GNU General Public License along with Millenium Player.
 // If not, see <https://www.gnu.org/licenses/>.
 
+use self::sealed::BroadcastingAudioDevice;
+
 use super::{
     sink::{AudioBuffer, BoxAudioBuffer, Sink},
     ChannelCount,
 };
-use crate::audio::SampleRate;
+use crate::{
+    audio::SampleRate,
+    broadcast::{BroadcastMessage, BroadcastSubscription, Broadcaster, Channel},
+};
 use cpal::{
     traits::{DeviceTrait, HostTrait, StreamTrait},
     BuildStreamError, Device, DeviceNameError, Host, OutputCallbackInfo, PauseStreamError,
@@ -28,7 +33,6 @@ use std::{
     fmt,
     sync::{
         atomic::{self, AtomicBool, AtomicU64},
-        mpsc::{Receiver, Sender},
         Arc, Mutex,
     },
     time::Duration,
@@ -83,8 +87,50 @@ pub enum AudioDeviceError {
     ),
 }
 
+bitflags::bitflags! {
+    #[derive(Copy, Clone, Debug, Eq, PartialEq)]
+    pub struct AudioDeviceMessageChannel: u8 {
+        const All = 0xFF;
+        const Errors = 0x01;
+        const Events = 0x02;
+        const Requests = 0x04;
+    }
+}
+
+impl Channel for AudioDeviceMessageChannel {
+    fn matches(&self, other: Self) -> bool {
+        self.bits() & other.bits() != 0
+    }
+}
+
+#[derive(Clone, Debug)]
+pub enum AudioDeviceMessage {
+    Error(Arc<AudioDeviceError>),
+    EventPlaybackFinished,
+    RequestAudioData,
+}
+
+impl BroadcastMessage for AudioDeviceMessage {
+    type Channel = AudioDeviceMessageChannel;
+
+    fn channel(&self) -> Self::Channel {
+        match self {
+            Self::Error(_) => AudioDeviceMessageChannel::Errors,
+            Self::EventPlaybackFinished => AudioDeviceMessageChannel::Events,
+            Self::RequestAudioData => AudioDeviceMessageChannel::Requests,
+        }
+    }
+
+    fn frequent(&self) -> bool {
+        matches!(
+            self,
+            Self::EventPlaybackFinished | AudioDeviceMessage::RequestAudioData
+        )
+    }
+}
+
 /// Represents an output device that can play audio.
-pub trait AudioDevice {
+pub trait AudioDevice: BroadcastingAudioDevice {
     /// Create a sink for the given sample rate and number of channels.
     fn create_sink(&self, input_sample_rate: SampleRate, input_channels: ChannelCount) -> Sink;
 
@@ -109,8 +155,21 @@ pub trait AudioDevice {
     /// Pauses playback on the device.
     fn pause(&self) -> Result<(), AudioDeviceError>;
 
-    /// Checks the device for errors.
-    fn healthcheck(&self) -> Result<(), AudioDeviceError>;
+    /// Subscribe to this device's events.
+    fn subscribe(
+        &self,
+        name: &'static str,
+        channel: AudioDeviceMessageChannel,
+    ) -> BroadcastSubscription<AudioDeviceMessage>;
+}
+
+mod sealed {
+    use super::*;
+
+    pub trait BroadcastingAudioDevice {
+        /// Get the device's broadcaster.
+        fn broadcaster(&self) -> Broadcaster<AudioDeviceMessage>;
+    }
 }
 
 #[derive(thiserror::Error)]
@@ -151,6 +210,7 @@ struct NullAudioDevice {
     config: SupportedStreamConfig,
     output_buffer: Arc<Mutex<BoxAudioBuffer>>,
     frames_consumed: AtomicU64,
+    broadcaster: Broadcaster<AudioDeviceMessage>,
 }
 
 impl NullAudioDevice {
@@ -167,20 +227,26 @@ impl NullAudioDevice {
                 AudioBuffer::new(Vec::<f32>::new()),
             ))),
             frames_consumed: AtomicU64::new(0),
+            broadcaster: Broadcaster::new(),
         }
+    }
+}
+
+impl BroadcastingAudioDevice for NullAudioDevice {
+    fn broadcaster(&self) -> Broadcaster<AudioDeviceMessage> {
+        self.broadcaster.clone()
     }
 }
 
 impl AudioDevice for NullAudioDevice {
     fn create_sink(&self, input_sample_rate: SampleRate, input_channels: ChannelCount) -> Sink {
-        let (_, rx) = std::sync::mpsc::channel();
         Sink::new(
             input_sample_rate,
             input_channels,
             self.config.sample_rate().0,
             self.config.channels() as ChannelCount,
             self.output_buffer.clone(),
-            Arc::new(rx),
+            self.broadcaster.clone(),
         )
     }
 
@@ -212,15 +278,13 @@ impl AudioDevice for NullAudioDevice {
         Ok(())
     }
 
-    fn healthcheck(&self) -> Result<(), AudioDeviceError> {
-        Ok(())
+    fn subscribe(
+        &self,
+        name: &'static str,
+        channel: AudioDeviceMessageChannel,
+    ) -> BroadcastSubscription<AudioDeviceMessage> {
+        self.broadcaster.subscribe(name, channel)
     }
-}
-
-struct StreamBuilderResult {
-    stream: Stream,
-    error_receiver: Receiver<AudioDeviceError>,
-    output_needed_signal: Receiver<()>,
 }
 
 #[derive(Default)]
@@ -229,6 +293,7 @@ struct StreamBuilder<'a> {
     frames_consumed: Option<Arc<AtomicU64>>,
     output_buffer: Option<Arc<Mutex<BoxAudioBuffer>>>,
     device: Option<&'a Device>,
+    broadcaster: Option<Broadcaster<AudioDeviceMessage>>,
 }
 
 impl<'a> StreamBuilder<'a> {
@@ -256,11 +321,12 @@ impl<'a> StreamBuilder<'a> {
         self
     }
 
-    fn output_stream<S: Sample + SizedSample + 'static>(
-        &self,
-        err_tx: Sender<AudioDeviceError>,
-        output_needed_signal: Sender<()>,
-    ) -> Result<Stream, BuildStreamError> {
+    fn broadcaster(mut self, broadcaster: Broadcaster<AudioDeviceMessage>) -> Self {
+        self.broadcaster = Some(broadcaster);
+        self
+    }
+
+    fn output_stream<S: Sample + SizedSample + 'static>(&self) -> Result<Stream, BuildStreamError> {
         let config = self.config.expect("config required");
         let frames_consumed = self
             .frames_consumed
@@ -273,53 +339,55 @@ impl<'a> StreamBuilder<'a> {
             .cloned()
             .expect("output_buffer required");
         let device = self.device.expect("device required");
+        let broadcaster = self
+            .broadcaster
+            .as_ref()
+            .expect("broadcaster required")
+            .clone();
 
         let desired_output_buffer_size =
             (DESIRED_BUFFER_LENGTH.as_secs_f32() * config.sample_rate().0 as f32) as usize;
         let channels = config.channels() as usize;
-        let write_data = move |data: &mut [S], _info: &OutputCallbackInfo| {
-            let mut output_buffer = output_buffer.lock().unwrap();
-            write_audio_data(
-                channels,
-                desired_output_buffer_size,
-                output_needed_signal.clone(),
-                frames_consumed.clone(),
-                &mut output_buffer,
-                data,
-            );
+        let write_data = {
+            let broadcaster = broadcaster.clone();
+            move |data: &mut [S], _info: &OutputCallbackInfo| {
+                let mut output_buffer = output_buffer.lock().unwrap();
+                write_audio_data(
+                    channels,
+                    desired_output_buffer_size,
+                    broadcaster.clone(),
+                    frames_consumed.clone(),
+                    &mut output_buffer,
+                    data,
+                );
+            }
         };
 
         let error_callback = move |err: StreamError| {
             log::error!("stream error: {}", err);
-            if let Err(send_err) = err_tx.send(err.into()) {
-                log::error!("failed to send stream error to audio device: {}", send_err);
-            }
+            broadcaster.broadcast(AudioDeviceMessage::Error(
+                AudioDeviceError::from(err).into(),
+            ));
         };
         device.build_output_stream(&config.config(), write_data, error_callback, None)
     }
 
-    fn build(self) -> Result<StreamBuilderResult, BuildStreamError> {
+    fn build(self) -> Result<Stream, BuildStreamError> {
         let config = self.config.expect("config required");
 
         let sample_format = config.sample_format();
-        let (out_needed_tx, out_needed_rx) = std::sync::mpsc::channel();
-        let (err_tx, err_rx) = std::sync::mpsc::channel();
         let stream = match sample_format {
-            SampleFormat::F32 => self.output_stream::<f32>(err_tx, out_needed_tx),
-            SampleFormat::F64 => self.output_stream::<f64>(err_tx, out_needed_tx),
-            SampleFormat::I16 => self.output_stream::<i16>(err_tx, out_needed_tx),
-            SampleFormat::I32 => self.output_stream::<i32>(err_tx, out_needed_tx),
-            SampleFormat::I8 => self.output_stream::<i8>(err_tx, out_needed_tx),
-            SampleFormat::U16 => self.output_stream::<u16>(err_tx, out_needed_tx),
-            SampleFormat::U32 => self.output_stream::<u32>(err_tx, out_needed_tx),
-            SampleFormat::U8 => self.output_stream::<u8>(err_tx, out_needed_tx),
+            SampleFormat::F32 => self.output_stream::<f32>(),
+            SampleFormat::F64 => self.output_stream::<f64>(),
+            SampleFormat::I16 => self.output_stream::<i16>(),
+            SampleFormat::I32 => self.output_stream::<i32>(),
+            SampleFormat::I8 => self.output_stream::<i8>(),
+            SampleFormat::U16 => self.output_stream::<u16>(),
+            SampleFormat::U32 => self.output_stream::<u32>(),
+            SampleFormat::U8 => self.output_stream::<u8>(),
             _ => unreachable!("unsupported sample format: {sample_format:?} (this is a bug)"),
         }?;
-        Ok(StreamBuilderResult {
-            stream,
-            error_receiver: err_rx,
-            output_needed_signal: out_needed_rx,
-        })
+        Ok(stream)
     }
 }
 
@@ -335,8 +403,7 @@ struct CpalAudioDevice {
 
     // Audio data and message passing
     output_buffer: Arc<Mutex<BoxAudioBuffer>>,
-    output_needed_signal: Arc<Receiver<()>>,
-    error_receiver: Receiver<AudioDeviceError>,
+    broadcaster: Broadcaster<AudioDeviceMessage>,
 }
 
 impl CpalAudioDevice {
@@ -358,13 +425,11 @@ impl CpalAudioDevice {
         let frames_consumed = Arc::new(AtomicU64::new(0));
         let output_buffer = Arc::new(Mutex::new(BoxAudioBuffer::empty(config.sample_format())));
 
-        let StreamBuilderResult {
-            stream,
-            error_receiver,
-            output_needed_signal,
-        } = StreamBuilder::new()
+        let broadcaster = Broadcaster::new();
+        let stream = StreamBuilder::new()
             .config(&config)
             .device(&device)
+            .broadcaster(broadcaster.clone())
             .frames_consumed(frames_consumed.clone())
             .output_buffer(output_buffer.clone())
             .build()?;
@@ -380,9 +445,14 @@ impl CpalAudioDevice {
             playing: AtomicBool::new(false),
 
             output_buffer,
-            output_needed_signal: Arc::new(output_needed_signal),
-            error_receiver,
+            broadcaster,
         })
+    }
+}
+
+impl BroadcastingAudioDevice for CpalAudioDevice {
+    fn broadcaster(&self) -> Broadcaster<AudioDeviceMessage> {
+        self.broadcaster.clone()
     }
 }
 
@@ -395,7 +465,7 @@ impl AudioDevice for CpalAudioDevice {
             self.config.sample_rate().0,
             self.config.channels() as ChannelCount,
             self.output_buffer.clone(),
-            self.output_needed_signal.clone(),
+            self.broadcaster.clone(),
         )
     }
 
@@ -434,11 +504,12 @@ impl AudioDevice for CpalAudioDevice {
         Ok(())
     }
 
-    fn healthcheck(&self) -> Result<(), AudioDeviceError> {
-        if let Ok(err) = self.error_receiver.try_recv() {
-            return Err(err);
-        }
-        Ok(())
+    fn subscribe(
+        &self,
+        name: &'static str,
+        channel: AudioDeviceMessageChannel,
+    ) -> BroadcastSubscription<AudioDeviceMessage> {
+        self.broadcaster.subscribe(name, channel)
     }
 }
 
@@ -446,7 +517,7 @@ impl AudioDevice for CpalAudioDevice {
 fn write_audio_data<S>(
     channels: usize,
     desired_output_buffer_size: usize,
-    output_needed_signal: Sender<()>,
+    broadcaster: Broadcaster<AudioDeviceMessage>,
     frames_consumed: Arc<AtomicU64>,
     box_output_buffer: &mut BoxAudioBuffer,
     data: &mut [S],
@@ -455,7 +526,7 @@ fn write_audio_data<S>(
 {
     let output_buffer = box_output_buffer.expect_mut::<S>();
     if output_buffer.len() < desired_output_buffer_size {
-        let _ = output_needed_signal.send(());
+        broadcaster.broadcast(AudioDeviceMessage::RequestAudioData);
     }
 
     let len_to_consume = usize::min(output_buffer.len(), data.len());
@@ -476,6 +547,8 @@ fn write_audio_data<S>(
         log::warn!(
             "filled output device with silence (this is either a performance issue or a bug)"
         );
+    } else if filled_in_silence {
+        broadcaster.broadcast(AudioDeviceMessage::EventPlaybackFinished);
     }
 }
 

@@ -12,7 +12,10 @@
 // You should have received a copy of the GNU General Public License along with Millenium Player.
 // If not, see <https://www.gnu.org/licenses/>.
 
+use crate::broadcast::{BroadcastSubscription, Broadcaster};
+
 use super::{
+    device::{AudioDeviceMessage, AudioDeviceMessageChannel},
     source::{Resampler, SourceBuffer},
     ChannelCount, SampleRate,
 };
@@ -23,7 +26,7 @@ use std::{
     cell::RefCell,
     mem,
     ops::{DerefMut, RangeBounds},
-    sync::{mpsc::Receiver, Arc, Mutex},
+    sync::{Arc, Mutex},
     time::Duration,
 };
 
@@ -40,7 +43,7 @@ pub struct Sink {
     resampler: Option<RefCell<SincFixedIn<f32>>>,
     input_buffer: Arc<Mutex<SourceBuffer>>,
     output_buffer: Arc<Mutex<BoxAudioBuffer>>,
-    output_needed_signal: Arc<Receiver<()>>,
+    subscription: BroadcastSubscription<AudioDeviceMessage>,
 }
 
 impl Sink {
@@ -51,7 +54,7 @@ impl Sink {
         output_sample_rate: SampleRate,
         output_channels: ChannelCount,
         output_buffer: Arc<Mutex<BoxAudioBuffer>>,
-        output_needed_signal: Arc<Receiver<()>>,
+        broadcaster: Broadcaster<AudioDeviceMessage>,
     ) -> Self {
         let resampler = if input_sample_rate != output_sample_rate {
             Some(RefCell::new(
@@ -75,6 +78,7 @@ impl Sink {
         } else {
             None
         };
+        let subscription = broadcaster.subscribe("audio-sink", AudioDeviceMessageChannel::Requests);
         Self {
             input_sample_rate,
             input_channels,
@@ -88,7 +92,7 @@ impl Sink {
                 input_channels,
             ))),
             output_buffer,
-            output_needed_signal,
+            subscription,
         }
     }
 
@@ -123,7 +127,8 @@ impl Sink {
 
     /// This is a blocking call that sends data to the audio device as needed.
     pub fn send_audio_with_timeout(&self, timeout: Duration) {
-        if self.output_needed_signal.recv_timeout(timeout).is_ok() {
+        if let Some(AudioDeviceMessage::RequestAudioData) = self.subscription.recv_timeout(timeout)
+        {
             let mut input_buffer = self.input_buffer.lock().unwrap();
             if input_buffer.frame_count() >= CHUNK_SIZE_FRAMES {
                 let mut resampler_borrow = self.resampler.as_ref().map(|r| r.borrow_mut());

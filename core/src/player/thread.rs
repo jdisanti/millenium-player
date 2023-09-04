@@ -12,51 +12,54 @@
 // You should have received a copy of the GNU General Public License along with Millenium Player.
 // If not, see <https://www.gnu.org/licenses/>.
 
+use super::message::{PlayerMessage, PlayerMessageChannel};
 use super::state::StateManager;
 use super::waveform::{Waveform, WaveformCalculator};
-use super::{message, PlayerThreadError, PlayerThreadHandle};
-use crate::audio::device::{create_device, AudioDevice};
+use super::{PlayerThreadError, PlayerThreadHandle};
+use crate::audio::device::{
+    create_device, AudioDevice, AudioDeviceMessage, AudioDeviceMessageChannel,
+};
 use crate::audio::sink::Sink;
-use crate::player::message::FromPlayerMessage;
-use std::sync::{mpsc, Arc, Mutex};
+use crate::broadcast::{BroadcastSubscription, Broadcaster};
+use std::sync::{Arc, Mutex};
 use std::thread;
+use std::time::Duration;
 
 pub(super) struct PlayerThreadResources {
     pub(super) device: Box<dyn AudioDevice>,
     pub(super) current_sink: Option<Sink>,
     pub(super) waveform_calculator: Option<WaveformCalculator>,
     pub(super) waveform: Arc<Mutex<Waveform>>,
-    from_tx: mpsc::Sender<message::FromPlayerMessage>,
-}
-
-impl PlayerThreadResources {
-    pub(super) fn send_message(&self, message: FromPlayerMessage) {
-        self.from_tx
-            .send(message)
-            .expect("failed to send message back to owner of the player thread");
-    }
+    pub(super) broadcaster: Broadcaster<PlayerMessage>,
 }
 
 /// Audio playback thread.
 pub struct PlayerThread {
     resources: PlayerThreadResources,
-    to_rx: mpsc::Receiver<message::ToPlayerMessage>,
+    player_sub: BroadcastSubscription<PlayerMessage>,
+    device_sub: BroadcastSubscription<AudioDeviceMessage>,
 }
 
 impl PlayerThread {
     /// Creates an audio device and starts a player thread.
     fn new(
-        to_rx: mpsc::Receiver<message::ToPlayerMessage>,
-        from_tx: mpsc::Sender<message::FromPlayerMessage>,
+        broadcaster: Broadcaster<PlayerMessage>,
+        player_sub: BroadcastSubscription<PlayerMessage>,
         preferred_output_device_name: Option<String>,
     ) -> Self {
         let device = match create_device(preferred_output_device_name.as_deref()) {
             Ok(device) => device,
             Err(err) => {
-                let _ = from_tx.send(FromPlayerMessage::AudioDeviceCreationFailed(err.source));
+                broadcaster.broadcast(PlayerMessage::EventAudioDeviceCreationFailed(
+                    err.source.into(),
+                ));
                 err.fallback_device
             }
         };
+        let device_sub = device.subscribe(
+            "player-thread",
+            AudioDeviceMessageChannel::Errors | AudioDeviceMessageChannel::Events,
+        );
 
         Self {
             resources: PlayerThreadResources {
@@ -64,24 +67,29 @@ impl PlayerThread {
                 current_sink: None,
                 waveform_calculator: None,
                 waveform: Arc::new(Mutex::new(Waveform::empty())),
-                from_tx,
+                broadcaster: broadcaster.clone(),
             },
-            to_rx,
+            player_sub,
+            device_sub,
         }
     }
 
     pub fn spawn(
-        from_tx: mpsc::Sender<message::FromPlayerMessage>,
         preferred_output_device_name: Option<String>,
     ) -> Result<PlayerThreadHandle, PlayerThreadError> {
-        let (to_tx, to_rx) = mpsc::channel();
+        let broadcaster = Broadcaster::new();
+        let subscription = broadcaster.subscribe("player-thread", PlayerMessageChannel::Commands);
         let join_handle = thread::Builder::new()
             .name("player".into())
-            .spawn(move || {
-                PlayerThread::new(to_rx, from_tx, preferred_output_device_name).run();
+            .spawn({
+                let broadcaster = broadcaster.clone();
+                move || {
+                    PlayerThread::new(broadcaster, subscription, preferred_output_device_name)
+                        .run();
+                }
             })
             .map_err(|source| PlayerThreadError::FailedToSpawn { source })?;
-        Ok(PlayerThreadHandle::new(join_handle, to_tx))
+        Ok(PlayerThreadHandle::new(join_handle, broadcaster))
     }
 
     fn run(mut self) {
@@ -89,16 +97,30 @@ impl PlayerThread {
 
         let mut state_manager = StateManager::new();
         while !state_manager.should_quit() {
-            if let Err(err) = self.resources.device.healthcheck() {
-                self.resources
-                    .send_message(FromPlayerMessage::AudioDeviceFailed(format!("{err}")));
-                break;
+            let mut pause_device = false;
+            while let Some(message) = self.device_sub.try_recv() {
+                match message {
+                    AudioDeviceMessage::Error(err) => {
+                        self.resources
+                            .broadcaster
+                            .broadcast(PlayerMessage::EventAudioDeviceFailed(format!("{err}")));
+                        break;
+                    }
+                    AudioDeviceMessage::EventPlaybackFinished => {
+                        pause_device = true;
+                    }
+                    _ => {}
+                }
+            }
+            if pause_device {
+                self.resources.device.pause().unwrap();
             }
 
             let next_message = if state_manager.blocked_on_messages() {
-                self.to_rx.recv().ok()
+                // Use a timeout so that audio device messages are still handled
+                self.player_sub.recv_timeout(Duration::from_millis(500))
             } else {
-                self.to_rx.try_recv().ok()
+                self.player_sub.try_recv()
             };
             if let Some(message) = next_message {
                 log::info!("player received message: {message:?}");
@@ -115,10 +137,10 @@ mod tests {
     use super::*;
 
     #[test]
+    #[ntest::timeout(100)]
     fn spawn_and_close() {
-        let (from_tx, _) = mpsc::channel();
-        let handle = PlayerThread::spawn(from_tx, None).unwrap();
-        handle.send(message::ToPlayerMessage::Quit).unwrap();
+        let handle = PlayerThread::spawn(None).unwrap();
+        handle.broadcaster().broadcast(PlayerMessage::CommandQuit);
         handle.join().expect("success");
     }
 }

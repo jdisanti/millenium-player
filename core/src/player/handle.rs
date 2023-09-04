@@ -12,9 +12,9 @@
 // You should have received a copy of the GNU General Public License along with Millenium Player.
 // If not, see <https://www.gnu.org/licenses/>.
 
-use super::{message, PlayerThreadError};
+use crate::{broadcast::Broadcaster, player::message::PlayerMessage, player::PlayerThreadError};
 use std::any::Any;
-use std::sync::{mpsc, Arc, Weak};
+use std::sync::{Arc, Weak};
 use std::thread;
 
 enum StrongOrWeak<T> {
@@ -47,24 +47,24 @@ impl<T> StrongOrWeak<T> {
 
 pub struct PlayerThreadHandle {
     handle: StrongOrWeak<thread::JoinHandle<()>>,
-    to_tx: mpsc::Sender<message::ToPlayerMessage>,
+    broadcaster: Broadcaster<PlayerMessage>,
 }
 
 impl PlayerThreadHandle {
     pub(super) fn new(
         handle: thread::JoinHandle<()>,
-        to_tx: mpsc::Sender<message::ToPlayerMessage>,
+        broadcaster: Broadcaster<PlayerMessage>,
     ) -> Self {
         Self {
             handle: StrongOrWeak::strong(handle),
-            to_tx,
+            broadcaster,
         }
     }
 
     pub fn weak_clone(&self) -> Self {
         Self {
             handle: StrongOrWeak::weak(&self.handle),
-            to_tx: self.to_tx.clone(),
+            broadcaster: self.broadcaster.clone(),
         }
     }
 
@@ -82,9 +82,8 @@ impl PlayerThreadHandle {
         Ok(self)
     }
 
-    pub fn send(&self, message: message::ToPlayerMessage) -> Result<(), PlayerThreadError> {
-        self.to_tx.send(message)?;
-        Ok(())
+    pub fn broadcaster(&self) -> &Broadcaster<PlayerMessage> {
+        &self.broadcaster
     }
 
     pub fn join(self) -> Result<(), PlayerThreadError> {

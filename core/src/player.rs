@@ -12,8 +12,6 @@
 // You should have received a copy of the GNU General Public License along with Millenium Player.
 // If not, see <https://www.gnu.org/licenses/>.
 
-use std::sync::mpsc;
-
 mod handle;
 pub mod message;
 mod state;
@@ -35,11 +33,5 @@ pub enum PlayerThreadError {
     FailedToSpawn {
         #[source]
         source: std::io::Error,
-    },
-    #[error("failed to send message to player thread: {source}")]
-    FailedToSendMessage {
-        #[source]
-        #[from]
-        source: mpsc::SendError<message::ToPlayerMessage>,
     },
 }

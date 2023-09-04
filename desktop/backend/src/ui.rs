@@ -23,10 +23,11 @@ use crate::{
 };
 use camino::Utf8Path;
 use millenium_core::{
+    broadcast::{BroadcastMessage, BroadcastSubscription},
     location::Location,
     metadata::Metadata,
     player::{
-        message::{FromPlayerMessage, PlaybackStatus, ToPlayerMessage},
+        message::{PlaybackStatus, PlayerMessage, PlayerMessageChannel},
         waveform::Waveform,
         PlayerThread, PlayerThreadHandle,
     },
@@ -34,7 +35,6 @@ use millenium_core::{
 use std::{
     cell::RefCell,
     rc::Rc,
-    sync::mpsc::{self, Receiver},
     time::{Duration, Instant},
 };
 use tao::{
@@ -88,7 +88,7 @@ pub struct Ui {
     event_loop: Option<tao::event_loop::EventLoop<FromUiMessage>>,
 
     player: Option<PlayerThreadHandle>,
-    player_receiver: Receiver<FromPlayerMessage>,
+    player_subscription: BroadcastSubscription<PlayerMessage>,
     _playlist: Playlist,
 
     message_handler: MessageHandler,
@@ -142,12 +142,17 @@ impl Ui {
             }
         };
 
-        let (player_sender, player_receiver) = mpsc::channel();
-        let player = PlayerThread::spawn(player_sender, None)?;
+        let player = PlayerThread::spawn(None)?;
+        let player_subscription = player.broadcaster().subscribe(
+            "ui-backend",
+            PlayerMessageChannel::Events | PlayerMessageChannel::FrequentUpdates,
+        );
         if let Some(index) = playlist.current {
-            player.send(ToPlayerMessage::LoadAndPlayLocation(
-                playlist.locations[index].clone(),
-            ))?;
+            player
+                .broadcaster()
+                .broadcast(PlayerMessage::CommandLoadAndPlayLocation(
+                    playlist.locations[index].clone(),
+                ));
         }
         resources.borrow_mut().player = Some(player.weak_clone());
 
@@ -159,7 +164,7 @@ impl Ui {
             event_loop: Some(event_loop),
 
             player: Some(player),
-            player_receiver,
+            player_subscription,
             _playlist: playlist,
 
             message_handler: MessageHandler::new(resources.clone()),
@@ -187,10 +192,12 @@ impl Ui {
             *control_flow =
                 ControlFlow::WaitUntil(Instant::now() + Duration::from_millis(1000 / 60));
 
+            self.handle_player_messages();
+
             match event {
                 Event::LoopDestroyed => {
                     if let Some(player) = self.player.take() {
-                        let _ = player.send(ToPlayerMessage::Quit);
+                        player.broadcaster().broadcast(PlayerMessage::CommandQuit);
                         if let Err(err) = player.join() {
                             log::error!("{err}");
                         }
@@ -214,8 +221,6 @@ impl Ui {
                 _ => (),
             }
 
-            self.handle_player_messages();
-
             if let Err(err) = self.healthcheck() {
                 log::error!("{err}");
                 rfd::MessageDialog::new()
@@ -229,48 +234,46 @@ impl Ui {
     }
 
     fn handle_player_messages(&self) {
-        if let Ok(message) = self.player_receiver.try_recv() {
+        if let Some(message) = self.player_subscription.try_recv() {
             let mut resources = self.resources.borrow_mut();
-            let frequent_message = matches!(&message, &FromPlayerMessage::Waveform(_));
-            if !frequent_message {
-                log::info!("received message from player: {message:?}");
+            if !message.frequent() {
+                log::info!("ui-backend received broadcast message: {message:?}");
             }
             match message {
-                FromPlayerMessage::AudioDeviceCreationFailed(_err) => {
-                    // TODO
+                PlayerMessage::UpdateWaveform(waveform) => {
+                    let waveform_lock = waveform.lock().unwrap();
+                    resources.waveform.copy_from(&waveform_lock);
                 }
-                FromPlayerMessage::AudioDeviceFailed(_err) => {
-                    // TODO
-                }
-                FromPlayerMessage::FailedToDecodeAudio(_err) => {
-                    // TODO
-                }
-                FromPlayerMessage::FailedToLoadLocation(_err) => {
-                    // TODO
-                }
-                FromPlayerMessage::PlaybackStatus(status) => {
+                PlayerMessage::UpdatePlaybackStatus(status) => {
                     resources.playback_status = status;
+                    self.main_web_view
+                        .evaluate_script(r#"millenium.Message.handle("state_updated", null)"#)
+                        .expect("valid script");
                 }
-                FromPlayerMessage::StartedTrack => {}
-                FromPlayerMessage::FinishedTrack => {
+
+                PlayerMessage::EventAudioDeviceCreationFailed(_err) => {
+                    // TODO
+                }
+                PlayerMessage::EventAudioDeviceFailed(_err) => {
+                    // TODO
+                }
+                PlayerMessage::EventFailedToDecodeAudio(_err) => {
+                    // TODO
+                }
+                PlayerMessage::EventFailedToLoadLocation(_err) => {
+                    // TODO
+                }
+                PlayerMessage::EventStartedTrack => {}
+                PlayerMessage::EventFinishedTrack => {
                     resources.waveform.copy_from(&Waveform::empty());
                     resources.playback_status = PlaybackStatus::default();
                     resources.metadata = None;
                 }
-                FromPlayerMessage::MetadataLoaded(metadata) => {
+                PlayerMessage::EventMetadataLoaded(metadata) => {
                     resources.metadata = Some(metadata);
                 }
-                FromPlayerMessage::Waveform(waveform) => {
-                    let waveform_lock = waveform.lock().unwrap();
-                    resources.waveform.copy_from(&waveform_lock);
-                }
-            }
 
-            let _ = resources;
-            if !frequent_message {
-                self.main_web_view
-                    .evaluate_script(r#"millenium.Message.handle("state_updated", null)"#)
-                    .expect("valid script");
+                _ => {}
             }
         }
     }

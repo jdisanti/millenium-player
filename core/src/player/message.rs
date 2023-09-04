@@ -14,43 +14,88 @@
 
 use super::waveform::Waveform;
 use crate::audio::{device::AudioDeviceError, source::AudioSourceError};
+use crate::broadcast::{BroadcastMessage, Channel};
 use crate::{location::Location, metadata::Metadata};
 use std::sync::{Arc, Mutex};
 
-#[derive(Debug)]
-pub enum FromPlayerMessage {
-    /// This is the loaded track metadata.
-    MetadataLoaded(Metadata),
-    /// The playback status changed.
-    PlaybackStatus(PlaybackStatus),
-    /// The currently playing track started.
-    StartedTrack,
-    /// The currently playing track finished.
-    FinishedTrack,
-    /// Failed to load location.
-    FailedToLoadLocation(AudioSourceError),
-    /// Failed to decode audio.
-    FailedToDecodeAudio(AudioSourceError),
-    /// The audio device failed.
-    AudioDeviceFailed(String),
-    /// Failed to create an audio device.
-    AudioDeviceCreationFailed(AudioDeviceError),
-    /// Updated waveform data.
-    Waveform(Arc<Mutex<Waveform>>),
+bitflags::bitflags! {
+    #[derive(Copy, Clone, Debug, Eq, PartialEq)]
+    pub struct PlayerMessageChannel: u8 {
+        const All = 0xFF;
+        const Events = 0x01;
+        const Commands = 0x02;
+        const FrequentUpdates = 0x04;
+    }
 }
 
-#[derive(Debug)]
-pub enum ToPlayerMessage {
+impl Channel for PlayerMessageChannel {
+    fn matches(&self, other: Self) -> bool {
+        self.bits() & other.bits() != 0
+    }
+}
+
+#[derive(Clone, Debug)]
+pub enum PlayerMessage {
     /// The application is shutting down. Exit the player thread.
-    Quit,
+    CommandQuit,
     /// Load and play a location.
-    LoadAndPlayLocation(Location),
+    CommandLoadAndPlayLocation(Location),
     /// Pause playback.
-    Pause,
+    CommandPause,
     /// Resume playback.
-    Resume,
+    CommandResume,
     /// Stop playback.
-    Stop,
+    CommandStop,
+
+    /// This is the loaded track metadata.
+    EventMetadataLoaded(Metadata),
+    /// The currently playing track started.
+    EventStartedTrack,
+    /// The currently playing track finished.
+    EventFinishedTrack,
+    /// Failed to load location.
+    EventFailedToLoadLocation(Arc<AudioSourceError>),
+    /// Failed to decode audio.
+    EventFailedToDecodeAudio(Arc<AudioSourceError>),
+    /// The audio device failed.
+    EventAudioDeviceFailed(String),
+    /// Failed to create an audio device.
+    EventAudioDeviceCreationFailed(Arc<AudioDeviceError>),
+
+    /// The playback status changed.
+    UpdatePlaybackStatus(PlaybackStatus),
+    /// Updated waveform data.
+    UpdateWaveform(Arc<Mutex<Waveform>>),
+}
+
+impl BroadcastMessage for PlayerMessage {
+    type Channel = PlayerMessageChannel;
+
+    fn channel(&self) -> Self::Channel {
+        match self {
+            Self::CommandQuit
+            | Self::CommandLoadAndPlayLocation(_)
+            | Self::CommandPause
+            | Self::CommandResume
+            | Self::CommandStop => Self::Channel::Commands,
+
+            Self::EventMetadataLoaded(_)
+            | Self::EventStartedTrack
+            | Self::EventFinishedTrack
+            | Self::EventFailedToLoadLocation(_)
+            | Self::EventFailedToDecodeAudio(_)
+            | Self::EventAudioDeviceFailed(_)
+            | Self::EventAudioDeviceCreationFailed(_) => Self::Channel::Events,
+
+            Self::UpdatePlaybackStatus(_) | Self::UpdateWaveform(_) => {
+                Self::Channel::FrequentUpdates
+            }
+        }
+    }
+
+    fn frequent(&self) -> bool {
+        self.channel() == PlayerMessageChannel::FrequentUpdates
+    }
 }
 
 #[derive(Clone, Copy, Debug, Default, serde::Serialize)]
@@ -58,14 +103,4 @@ pub struct PlaybackStatus {
     pub playing: bool,
     pub position_secs: f64,
     pub duration_secs: Option<f64>,
-}
-
-#[cfg(test)]
-mod tests {
-    #[test]
-    fn it_is_send() {
-        fn assert_send<T: Send>() {}
-        assert_send::<super::ToPlayerMessage>();
-        assert_send::<super::FromPlayerMessage>();
-    }
 }

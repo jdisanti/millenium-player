@@ -12,7 +12,7 @@
 // You should have received a copy of the GNU General Public License along with Millenium Player.
 // If not, see <https://www.gnu.org/licenses/>.
 
-use millenium_core::player::message::ToPlayerMessage;
+use millenium_core::player::message::PlayerMessage;
 
 use crate::ui::SharedUiResources;
 
@@ -33,13 +33,19 @@ impl MessageHandler {
         match message {
             PlayCurrent => {
                 if !resources.playback_status.playing {
-                    resources.player().send(ToPlayerMessage::Resume).unwrap();
+                    resources
+                        .player()
+                        .broadcaster()
+                        .broadcast(PlayerMessage::CommandResume);
                     resources.playback_status.playing = true;
                 }
             }
             PauseCurrent => {
                 if resources.playback_status.playing {
-                    resources.player().send(ToPlayerMessage::Pause).unwrap();
+                    resources
+                        .player()
+                        .broadcaster()
+                        .broadcast(PlayerMessage::CommandPause);
                     resources.playback_status.playing = false;
                 }
             }
