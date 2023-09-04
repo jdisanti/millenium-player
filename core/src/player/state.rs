@@ -279,7 +279,7 @@ fn queue_chunks(
                     if recreate_sink {
                         log::info!("recreating the audio sink");
                         if let Some(s) = resources.current_sink.as_ref() {
-                            s.flush();
+                            s.flush(false);
                         }
                         resources.current_sink =
                             Some(resources.device.create_sink(sample_rate, channels));
@@ -289,6 +289,9 @@ fn queue_chunks(
             }
             Ok(None) => {
                 log::info!("finished playing track");
+                if let Some(sink) = resources.current_sink.as_ref() {
+                    sink.flush(true);
+                }
                 resources.send_message(FromPlayerMessage::FinishedTrack);
                 return Some(CurrentState::DoNothing);
             }
