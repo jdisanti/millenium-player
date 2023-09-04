@@ -16,11 +16,14 @@ use super::message::{PlayerMessage, PlayerMessageChannel};
 use super::state::StateManager;
 use super::waveform::{Waveform, WaveformCalculator};
 use super::{PlayerThreadError, PlayerThreadHandle};
-use crate::audio::device::{create_device, AudioDevice};
+use crate::audio::device::{
+    create_device, AudioDevice, AudioDeviceMessage, AudioDeviceMessageChannel,
+};
 use crate::audio::sink::Sink;
 use crate::broadcast::{BroadcastSubscription, Broadcaster};
 use std::sync::{Arc, Mutex};
 use std::thread;
+use std::time::Duration;
 
 pub(super) struct PlayerThreadResources {
     pub(super) device: Box<dyn AudioDevice>,
@@ -33,14 +36,15 @@ pub(super) struct PlayerThreadResources {
 /// Audio playback thread.
 pub struct PlayerThread {
     resources: PlayerThreadResources,
-    subscription: BroadcastSubscription<PlayerMessage>,
+    player_sub: BroadcastSubscription<PlayerMessage>,
+    device_sub: BroadcastSubscription<AudioDeviceMessage>,
 }
 
 impl PlayerThread {
     /// Creates an audio device and starts a player thread.
     fn new(
         broadcaster: Broadcaster<PlayerMessage>,
-        subscription: BroadcastSubscription<PlayerMessage>,
+        player_sub: BroadcastSubscription<PlayerMessage>,
         preferred_output_device_name: Option<String>,
     ) -> Self {
         let device = match create_device(preferred_output_device_name.as_deref()) {
@@ -52,6 +56,10 @@ impl PlayerThread {
                 err.fallback_device
             }
         };
+        let device_sub = device.subscribe(
+            "player-thread",
+            AudioDeviceMessageChannel::Errors | AudioDeviceMessageChannel::Events,
+        );
 
         Self {
             resources: PlayerThreadResources {
@@ -61,7 +69,8 @@ impl PlayerThread {
                 waveform: Arc::new(Mutex::new(Waveform::empty())),
                 broadcaster: broadcaster.clone(),
             },
-            subscription,
+            player_sub,
+            device_sub,
         }
     }
 
@@ -88,17 +97,30 @@ impl PlayerThread {
 
         let mut state_manager = StateManager::new();
         while !state_manager.should_quit() {
-            if let Err(err) = self.resources.device.healthcheck() {
-                self.resources
-                    .broadcaster
-                    .broadcast(PlayerMessage::EventAudioDeviceFailed(format!("{err}")));
-                break;
+            let mut pause_device = false;
+            while let Some(message) = self.device_sub.try_recv() {
+                match message {
+                    AudioDeviceMessage::Error(err) => {
+                        self.resources
+                            .broadcaster
+                            .broadcast(PlayerMessage::EventAudioDeviceFailed(format!("{err}")));
+                        break;
+                    }
+                    AudioDeviceMessage::EventPlaybackFinished => {
+                        pause_device = true;
+                    }
+                    _ => {}
+                }
+            }
+            if pause_device {
+                self.resources.device.pause().unwrap();
             }
 
             let next_message = if state_manager.blocked_on_messages() {
-                self.subscription.recv()
+                // Use a timeout so that audio device messages are still handled
+                self.player_sub.recv_timeout(Duration::from_millis(500))
             } else {
-                self.subscription.try_recv()
+                self.player_sub.try_recv()
             };
             if let Some(message) = next_message {
                 log::info!("player received message: {message:?}");

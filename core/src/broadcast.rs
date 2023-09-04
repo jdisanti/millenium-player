@@ -25,6 +25,15 @@ pub trait Channel: Copy + Clone + Debug {
     fn matches(&self, other: Self) -> bool;
 }
 
+/// Special "no channels" channel for use cases that don't need channels.
+#[derive(Copy, Clone, Debug)]
+pub struct NoChannels;
+impl Channel for NoChannels {
+    fn matches(&self, _other: Self) -> bool {
+        true
+    }
+}
+
 /// A message that can be broadcast.
 pub trait BroadcastMessage: Clone + Debug + Send {
     type Channel: Channel;
