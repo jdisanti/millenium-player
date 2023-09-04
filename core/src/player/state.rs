@@ -12,15 +12,14 @@
 // You should have received a copy of the GNU General Public License along with Millenium Player.
 // If not, see <https://www.gnu.org/licenses/>.
 
-use super::{
-    message::{PlaybackStatus, ToPlayerMessage},
-    thread::PlayerThreadResources,
-    waveform::WaveformCalculator,
-};
 use crate::{
     audio::source::{AudioDecoderSource, PreferredFormat},
     location::Location,
-    player::message::FromPlayerMessage,
+    player::{
+        message::{PlaybackStatus, PlayerMessage},
+        thread::PlayerThreadResources,
+        waveform::WaveformCalculator,
+    },
 };
 use std::{
     mem,
@@ -42,17 +41,17 @@ enum CurrentState {
 }
 
 impl CurrentState {
-    fn handle_message(self, resources: &PlayerThreadResources, message: ToPlayerMessage) -> Self {
+    fn handle_message(self, resources: &PlayerThreadResources, message: PlayerMessage) -> Self {
         match message {
-            ToPlayerMessage::Quit => CurrentState::Quit,
-            ToPlayerMessage::Pause => {
+            PlayerMessage::CommandQuit => CurrentState::Quit,
+            PlayerMessage::CommandPause => {
                 if let CurrentState::Playing(state) = self {
                     state.transition_to_pause_state(resources)
                 } else {
                     self
                 }
             }
-            ToPlayerMessage::Resume => {
+            PlayerMessage::CommandResume => {
                 if matches!(self, CurrentState::Paused(_)) {
                     log::info!("resuming playback");
                     let CurrentState::Paused(state) = self else { unreachable!() };
@@ -62,23 +61,25 @@ impl CurrentState {
                     self
                 }
             }
-            ToPlayerMessage::Stop => {
+            PlayerMessage::CommandStop => {
                 log::info!("stopping playback");
                 if matches!(self, CurrentState::Playing(_)) {
                     if let Err(err) = resources.device.stop() {
                         log::error!("failed to stop audio stream: {}", err);
                         resources
-                            .send_message(FromPlayerMessage::AudioDeviceFailed(err.to_string()));
+                            .broadcaster
+                            .broadcast(PlayerMessage::EventAudioDeviceFailed(err.to_string()));
                     }
                     CurrentState::DoNothing
                 } else {
                     self
                 }
             }
-            ToPlayerMessage::LoadAndPlayLocation(location) => {
+            PlayerMessage::CommandLoadAndPlayLocation(location) => {
                 log::info!("loading and playing location: {:?}", location);
                 CurrentState::LoadLocation(StateLoadLocation { location })
             }
+            _ => self,
         }
     }
 }
@@ -122,7 +123,7 @@ impl StateManager {
     pub(super) fn handle_message(
         &mut self,
         resources: &mut PlayerThreadResources,
-        message: ToPlayerMessage,
+        message: PlayerMessage,
     ) {
         let current = mem::take(&mut self.current);
         self.current = current.handle_message(resources, message);
@@ -156,7 +157,9 @@ impl StatePlaying {
     fn transition_to_pause_state(mut self, resources: &PlayerThreadResources) -> CurrentState {
         log::info!("pausing playback");
         self.status.playing = false;
-        resources.send_message(FromPlayerMessage::PlaybackStatus(self.status));
+        resources
+            .broadcaster
+            .broadcast(PlayerMessage::UpdatePlaybackStatus(self.status));
         resources.device.pause().unwrap();
         CurrentState::Paused(self)
     }
@@ -171,7 +174,9 @@ impl State for StatePlaying {
         if waveform_calc.waveform_needs_update(&waveform_lock) {
             waveform_calc.copy_latest_waveform_into(&mut *waveform_lock);
             drop(waveform_lock);
-            resources.send_message(FromPlayerMessage::Waveform(resources.waveform.clone()));
+            resources
+                .broadcaster
+                .broadcast(PlayerMessage::UpdateWaveform(resources.waveform.clone()));
         }
 
         let next_state = if let Some(new_state) = maybe_next_state {
@@ -191,7 +196,9 @@ impl State for StatePlaying {
                     self.status.duration_secs = frame_count.map(|fc| fc as f64 / sample_rate);
                 }
 
-                resources.send_message(FromPlayerMessage::PlaybackStatus(self.status));
+                resources
+                    .broadcaster
+                    .broadcast(PlayerMessage::UpdatePlaybackStatus(self.status));
                 self.last_refresh_sent = Instant::now();
             }
             CurrentState::Playing(self)
@@ -218,13 +225,17 @@ impl State for StateLoadLocation {
             Ok(source) => source,
             Err(err) => {
                 log::error!("failed to load location: {}", err);
-                resources.send_message(FromPlayerMessage::FailedToLoadLocation(err));
+                resources
+                    .broadcaster
+                    .broadcast(PlayerMessage::EventFailedToLoadLocation(err.into()));
                 return CurrentState::DoNothing;
             }
         };
         if let Some(metadata) = source.metadata() {
             log::info!("loaded metaresources: {:?}", metadata);
-            resources.send_message(FromPlayerMessage::MetadataLoaded(metadata.clone()));
+            resources
+                .broadcaster
+                .broadcast(PlayerMessage::EventMetadataLoaded(metadata.clone()));
         }
         resources
             .device
@@ -233,7 +244,9 @@ impl State for StateLoadLocation {
         let state = if let Some(new_state) = queue_chunks(resources, &mut source) {
             new_state
         } else {
-            resources.send_message(FromPlayerMessage::StartedTrack);
+            resources
+                .broadcaster
+                .broadcast(PlayerMessage::EventStartedTrack);
             CurrentState::Playing(StatePlaying::new(source))
         };
         let device = &resources.device;
@@ -292,12 +305,16 @@ fn queue_chunks(
                 if let Some(sink) = resources.current_sink.as_ref() {
                     sink.flush(true);
                 }
-                resources.send_message(FromPlayerMessage::FinishedTrack);
+                resources
+                    .broadcaster
+                    .broadcast(PlayerMessage::EventFinishedTrack);
                 return Some(CurrentState::DoNothing);
             }
             Err(err) => {
                 log::error!("error occurred while decoding audio: {}", err);
-                resources.send_message(FromPlayerMessage::FailedToDecodeAudio(err));
+                resources
+                    .broadcaster
+                    .broadcast(PlayerMessage::EventFailedToDecodeAudio(err.into()));
                 return Some(CurrentState::DoNothing);
             }
         }

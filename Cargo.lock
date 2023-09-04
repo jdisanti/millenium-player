@@ -1730,6 +1730,7 @@ name = "millenium-core"
 version = "0.1.0"
 dependencies = [
  "base64",
+ "bitflags 2.4.0",
  "camino",
  "cpal",
  "fastrand 2.0.0",
