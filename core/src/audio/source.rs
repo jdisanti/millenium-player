@@ -13,6 +13,7 @@
 // If not, see <https://www.gnu.org/licenses/>.
 
 use crate::{
+    audio::{ChannelCount, SampleRate},
     location::Location,
     metadata::{Metadata, MetadataConversionError},
 };
@@ -24,13 +25,11 @@ use symphonia::core::{
     audio::{AudioBuffer, AudioBufferRef, Signal},
     codecs::{Decoder, DecoderOptions},
     conv::{FromSample, IntoSample},
-    formats::FormatReader,
+    formats::{FormatReader, Track},
     io::MediaSourceStream,
     probe::Hint,
     sample::Sample,
 };
-
-use super::{ChannelCount, SampleRate};
 
 #[derive(Debug, thiserror::Error)]
 pub enum AudioSourceError {
@@ -293,6 +292,24 @@ impl SourceBuffer {
     }
 }
 
+/// Preferred format to use when decoding audio.
+///
+/// This is used to decide which track to select in a multi-track file.
+#[derive(Copy, Clone)]
+pub struct PreferredFormat {
+    pub sample_rate: SampleRate,
+    pub channel_count: ChannelCount,
+}
+
+impl PreferredFormat {
+    pub fn new(sample_rate: SampleRate, channel_count: ChannelCount) -> Self {
+        Self {
+            sample_rate,
+            channel_count,
+        }
+    }
+}
+
 /// An audio decoder source.
 pub struct AudioDecoderSource {
     _location: Location,
@@ -300,25 +317,31 @@ pub struct AudioDecoderSource {
     decoder: Box<dyn Decoder>,
     metadata: Option<Metadata>,
     frame_count: Option<u64>,
+    selected_track_id: u32,
 }
 
 impl AudioDecoderSource {
     /// Creates a new audio decoder source with the given location.
     ///
     /// This will load the stream and metadata synchronously.
-    pub fn new(location: Location) -> Result<Self, AudioSourceError> {
+    pub fn new(
+        location: Location,
+        preferred_format: PreferredFormat,
+    ) -> Result<Self, AudioSourceError> {
         let Stream {
             reader,
             decoder,
             metadata,
             frame_count,
-        } = load_stream(&location, None)?;
+            selected_track_id,
+        } = load_stream(&location, None, preferred_format)?;
         Ok(Self {
             _location: location,
             reader,
             decoder,
             metadata,
             frame_count,
+            selected_track_id,
         })
     }
 
@@ -336,15 +359,23 @@ impl AudioDecoderSource {
     ///
     /// Returns `Ok(None)` if the stream has ended.
     pub fn next_chunk(&mut self) -> Result<Option<SourceBuffer>, AudioSourceError> {
-        let packet = match self.reader.next_packet() {
-            Ok(packet) => packet,
-            // Symphonia's end of stream is an IO error with unexpected EOF
-            Err(symphonia::core::errors::Error::IoError(err))
-                if err.kind() == std::io::ErrorKind::UnexpectedEof =>
-            {
-                return Ok(None)
-            }
-            Err(err) => return Err(AudioSourceError::FailedToReadStream { source: err.into() }),
+        let packet = loop {
+            match self.reader.next_packet() {
+                Ok(packet) => {
+                    if packet.track_id() == self.selected_track_id {
+                        break packet;
+                    }
+                }
+                // Symphonia's end of stream is an IO error with unexpected EOF
+                Err(symphonia::core::errors::Error::IoError(err))
+                    if err.kind() == std::io::ErrorKind::UnexpectedEof =>
+                {
+                    return Ok(None)
+                }
+                Err(err) => {
+                    return Err(AudioSourceError::FailedToReadStream { source: err.into() })
+                }
+            };
         };
         self.decoder
             .decode(&packet)
@@ -359,11 +390,13 @@ struct Stream {
     decoder: Box<dyn Decoder>,
     metadata: Option<Metadata>,
     frame_count: Option<u64>,
+    selected_track_id: u32,
 }
 
 fn load_stream(
     location: &Location,
     existing_metadata: Option<Metadata>,
+    preferred_format: PreferredFormat,
 ) -> Result<Stream, AudioSourceError> {
     let media_stream = match location {
         Location::Url(_url) => {
@@ -411,14 +444,15 @@ fn load_stream(
     };
 
     let codecs = symphonia::default::get_codecs();
-    let track = format
-        .format
-        .default_track()
-        .ok_or(AudioSourceError::SourceHadNoAudioTracks)?;
-    let frame_count = track.codec_params.n_frames;
+    let selected_track = select_track(&*format.format, preferred_format)?;
+    let selected_track_id = selected_track.id;
+    let frame_count = selected_track.codec_params.n_frames;
 
     let decoder = codecs
-        .make(&track.codec_params, &DecoderOptions { verify: true })
+        .make(
+            &selected_track.codec_params,
+            &DecoderOptions { verify: true },
+        )
         .map_err(|err| AudioSourceError::FailedToCreateAudioDecoder { source: err.into() })?;
 
     Ok(Stream {
@@ -426,5 +460,53 @@ fn load_stream(
         decoder,
         metadata,
         frame_count,
+        selected_track_id,
     })
+}
+
+fn select_track(
+    format_reader: &dyn FormatReader,
+    preferred_format: PreferredFormat,
+) -> Result<&Track, AudioSourceError> {
+    let tracks = format_reader.tracks();
+    if tracks.is_empty() {
+        Err(AudioSourceError::SourceHadNoAudioTracks)
+    } else if tracks.len() == 1 {
+        Ok(&tracks[0])
+    } else {
+        log::info!("multiple audio tracks found:");
+        let (mut preferred_by_channels, mut preferred_by_samples) = (None, None);
+        for track in tracks {
+            let channels = track
+                .codec_params
+                .channels
+                .map(|c| c.count())
+                .unwrap_or_default() as ChannelCount;
+            if channels == preferred_format.channel_count {
+                preferred_by_channels = Some(track);
+            }
+            let sample_rate = track.codec_params.sample_rate.unwrap_or_default();
+            if sample_rate == preferred_format.sample_rate {
+                preferred_by_samples = Some(track);
+            }
+            log::info!(
+                "  track {id}: {channels} channels, {sample_rate} Hz",
+                id = track.id
+            );
+        }
+        let selected_track = preferred_by_channels
+            .or(preferred_by_samples)
+            .or(Some(&tracks[0]))
+            .expect("there is at least one track");
+        log::info!(
+            "selected track {id} because {reason}",
+            id = selected_track.id,
+            reason = match (preferred_by_channels, preferred_by_samples) {
+                (Some(_), _) => "it has the right number of channels for the audio output device",
+                (None, Some(_)) => "its sample format matches the audio output device",
+                _ => "there was no track that matched the audio output device format",
+            }
+        );
+        Ok(selected_track)
+    }
 }

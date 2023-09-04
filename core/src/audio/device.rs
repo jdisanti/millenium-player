@@ -91,6 +91,9 @@ pub trait AudioDevice {
     /// Returns the sample rate that playback occurs at.
     fn playback_sample_rate(&self) -> SampleRate;
 
+    /// Returns the number of channels used for playback.
+    fn playback_channels(&self) -> ChannelCount;
+
     /// Returns the amount of audio data consumed in number of frames.
     fn frames_consumed(&self) -> u64;
 
@@ -183,6 +186,10 @@ impl AudioDevice for NullAudioDevice {
 
     fn playback_sample_rate(&self) -> SampleRate {
         44100
+    }
+
+    fn playback_channels(&self) -> ChannelCount {
+        2
     }
 
     fn frames_consumed(&self) -> u64 {
@@ -393,6 +400,10 @@ impl AudioDevice for CpalAudioDevice {
 
     fn playback_sample_rate(&self) -> SampleRate {
         self.config.sample_rate().0 as SampleRate
+    }
+
+    fn playback_channels(&self) -> ChannelCount {
+        self.config.channels() as ChannelCount
     }
 
     fn frames_consumed(&self) -> u64 {

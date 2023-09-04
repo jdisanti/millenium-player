@@ -18,7 +18,9 @@ use super::{
     waveform::WaveformCalculator,
 };
 use crate::{
-    audio::source::AudioDecoderSource, location::Location, player::message::FromPlayerMessage,
+    audio::source::{AudioDecoderSource, PreferredFormat},
+    location::Location,
+    player::message::FromPlayerMessage,
 };
 use std::{
     mem,
@@ -208,7 +210,11 @@ struct StateLoadLocation {
 impl State for StateLoadLocation {
     fn update(self, resources: &mut PlayerThreadResources) -> CurrentState {
         log::info!("loading location: {:?}", self.location);
-        let mut source = match AudioDecoderSource::new(self.location) {
+        let preferred_format = PreferredFormat::new(
+            resources.device.playback_sample_rate(),
+            resources.device.playback_channels(),
+        );
+        let mut source = match AudioDecoderSource::new(self.location, preferred_format) {
             Ok(source) => source,
             Err(err) => {
                 log::error!("failed to load location: {}", err);
