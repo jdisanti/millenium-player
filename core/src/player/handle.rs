@@ -37,6 +37,12 @@ impl<T> StrongOrWeak<T> {
             Self::Weak(value) => value.upgrade(),
         }
     }
+    fn strong_count(&self) -> usize {
+        match self {
+            Self::Strong(value) => Arc::strong_count(value),
+            Self::Weak(value) => Weak::strong_count(value),
+        }
+    }
 }
 
 pub struct PlayerThreadHandle {
@@ -65,6 +71,7 @@ impl PlayerThreadHandle {
     pub fn healthcheck(self) -> Result<Self, PlayerThreadError> {
         if let Some(handle) = self.handle.upgrade() {
             if handle.is_finished() {
+                drop(handle); // drop the strong ref so that the thread can exit
                 return if let Err(err) = self.join() {
                     Err(err)
                 } else {
@@ -81,12 +88,12 @@ impl PlayerThreadHandle {
     }
 
     pub fn join(self) -> Result<(), PlayerThreadError> {
+        assert_eq!(
+            1,
+            self.handle.strong_count(),
+            "we own self and this struct never gives direct access to the handle, so strong count must be 1"
+        );
         if let StrongOrWeak::Strong(handle) = self.handle {
-            assert_eq!(
-                1,
-                Arc::strong_count(&handle),
-                "we own self and this struct never gives direct access to the handle, so strong count must be 1"
-            );
             let handle = Arc::into_inner(handle).expect("checked above");
             handle.join().map_err(Self::map_join_err)?;
             Ok(())

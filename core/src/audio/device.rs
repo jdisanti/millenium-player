@@ -91,6 +91,9 @@ pub trait AudioDevice {
     /// Returns the sample rate that playback occurs at.
     fn playback_sample_rate(&self) -> SampleRate;
 
+    /// Returns the number of channels used for playback.
+    fn playback_channels(&self) -> ChannelCount;
+
     /// Returns the amount of audio data consumed in number of frames.
     fn frames_consumed(&self) -> u64;
 
@@ -183,6 +186,10 @@ impl AudioDevice for NullAudioDevice {
 
     fn playback_sample_rate(&self) -> SampleRate {
         44100
+    }
+
+    fn playback_channels(&self) -> ChannelCount {
+        2
     }
 
     fn frames_consumed(&self) -> u64 {
@@ -381,6 +388,7 @@ impl CpalAudioDevice {
 
 impl AudioDevice for CpalAudioDevice {
     fn create_sink(&self, input_sample_rate: SampleRate, input_channels: ChannelCount) -> Sink {
+        self.output_buffer.lock().unwrap().set_end_of_stream(false);
         Sink::new(
             input_sample_rate,
             input_channels,
@@ -393,6 +401,10 @@ impl AudioDevice for CpalAudioDevice {
 
     fn playback_sample_rate(&self) -> SampleRate {
         self.config.sample_rate().0 as SampleRate
+    }
+
+    fn playback_channels(&self) -> ChannelCount {
+        self.config.channels() as ChannelCount
     }
 
     fn frames_consumed(&self) -> u64 {
@@ -411,12 +423,14 @@ impl AudioDevice for CpalAudioDevice {
     fn play(&self) -> Result<(), AudioDeviceError> {
         self.stream.play()?;
         self.playing.store(true, atomic::Ordering::SeqCst);
+        log::info!("resumed audio device");
         Ok(())
     }
 
     fn pause(&self) -> Result<(), AudioDeviceError> {
         self.stream.pause()?;
         self.playing.store(false, atomic::Ordering::SeqCst);
+        log::info!("paused audio device");
         Ok(())
     }
 
@@ -434,12 +448,12 @@ fn write_audio_data<S>(
     desired_output_buffer_size: usize,
     output_needed_signal: Sender<()>,
     frames_consumed: Arc<AtomicU64>,
-    output_buffer: &mut BoxAudioBuffer,
+    box_output_buffer: &mut BoxAudioBuffer,
     data: &mut [S],
 ) where
     S: Sample + 'static,
 {
-    let output_buffer = output_buffer.expect_mut::<S>();
+    let output_buffer = box_output_buffer.expect_mut::<S>();
     if output_buffer.len() < desired_output_buffer_size {
         let _ = output_needed_signal.send(());
     }
@@ -458,7 +472,7 @@ fn write_audio_data<S>(
         *into = S::EQUILIBRIUM;
         filled_in_silence = true;
     }
-    if filled_in_silence {
+    if filled_in_silence && !box_output_buffer.is_end_of_stream() {
         log::warn!(
             "filled output device with silence (this is either a performance issue or a bug)"
         );

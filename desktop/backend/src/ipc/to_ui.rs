@@ -104,7 +104,7 @@ fn copy_f32s_into_ne_bytes(into: &mut Vec<u8>, data: &[f32]) {
     }
 }
 
-#[derive(Debug, serde::Serialize)]
+#[derive(Default, Debug, serde::Serialize)]
 pub struct Playing<'a> {
     pub title: Option<&'a str>,
     pub artist: Option<&'a str>,
@@ -133,7 +133,10 @@ impl<'a> From<&'a UiResources> for Playing<'a> {
                 status: resources.playback_status,
             }
         } else {
-            Playing::empty()
+            Playing {
+                status: resources.playback_status,
+                ..Self::default()
+            }
         }
     }
 }
