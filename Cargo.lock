@@ -1739,6 +1739,7 @@ dependencies = [
  "pretty_assertions",
  "rubato",
  "serde",
+ "serde_json",
  "spectrum-analyzer",
  "symphonia",
  "thiserror",

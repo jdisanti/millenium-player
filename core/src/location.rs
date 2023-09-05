@@ -71,6 +71,11 @@ impl Location {
         }
     }
 
+    /// Returns this location as a string.
+    pub fn as_str(&self) -> &str {
+        self.as_ref()
+    }
+
     /// Returns the file extension on this location, if there is one.
     pub fn extension(&self) -> Option<&str> {
         match self {
@@ -122,6 +127,36 @@ impl FromStr for Location {
                 }
             })?))
         }
+    }
+}
+
+impl AsRef<str> for Location {
+    fn as_ref(&self) -> &str {
+        match self {
+            Self::Path(path) => path.as_str(),
+            Self::Url(url) => url.as_str(),
+        }
+    }
+}
+
+impl<'de> serde::Deserialize<'de> for Location {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        use serde::de::{Error, Unexpected};
+        let s = String::deserialize(deserializer)?;
+        Location::from_str(&s)
+            .map_err(|_| Error::invalid_value(Unexpected::Str(&s), &"valid location"))
+    }
+}
+
+impl serde::Serialize for Location {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        serializer.serialize_str(self.as_str())
     }
 }
 
@@ -222,6 +257,26 @@ mod tests {
             Location::from_str("https://example.com/test.foo")
                 .unwrap()
                 .extension()
+        );
+    }
+
+    #[test]
+    fn serde() {
+        assert_eq!(
+            "\"https://example.com/\"",
+            serde_json::to_string(&Location::from_str("https://example.com/").unwrap()).unwrap()
+        );
+        assert_eq!(
+            "\"/path/to/something\"",
+            serde_json::to_string(&Location::from_str("/path/to/something").unwrap()).unwrap()
+        );
+        assert_eq!(
+            Location::from_str("https://example.com/").unwrap(),
+            serde_json::from_str("\"https://example.com/\"").unwrap(),
+        );
+        assert_eq!(
+            Location::path("/path/to/something"),
+            serde_json::from_str("\"/path/to/something\"").unwrap(),
         );
     }
 }

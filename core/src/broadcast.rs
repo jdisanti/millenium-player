@@ -78,6 +78,13 @@ impl<M: BroadcastMessage + Clone> BroadcastSubscription<M> {
         self.receiver.try_recv().ok()
     }
 
+    /// Broadcast from this subscription.
+    ///
+    /// This is a short-hand for `broadcaster.broadcast_from(self, subscription, message)`.
+    pub fn broadcast(&self, message: M) {
+        self.broadcaster.broadcast_from(self, message);
+    }
+
     /// Ends this subscription.
     pub fn unsubscribe(&self) {
         self.broadcaster.unsubscribe(self);
@@ -180,14 +187,16 @@ impl<M: BroadcastMessage> Broadcaster<M> {
             .retain(|subscriber| subscriber.id != id);
     }
 
-    /// Broadcast a message to all the subscribers.
-    pub fn broadcast(&self, message: M) {
+    fn do_broadcast(&self, exclude_id: Option<SubscriberId>, message: M) {
         let channel = message.channel();
         let mut n = 0;
         let dead_subscriber = {
             let mut dead = None;
             let subscriptions = self.inner.subscriptions.lock().unwrap();
             for subscriber in subscriptions.iter() {
+                if exclude_id.map(|id| id == subscriber.id).unwrap_or(false) {
+                    continue;
+                }
                 if subscriber.channel.matches(channel) {
                     if subscriber.sender.send(message.clone()).is_err() {
                         // This subscriber is dead, so remove it from the list.
@@ -215,6 +224,18 @@ impl<M: BroadcastMessage> Broadcaster<M> {
             level,
             "broadcasted message to {n} subscribers on {channel:?}: {message:?}"
         );
+    }
+
+    /// Broadcast a message to all subscribers excluding the one sending the message.
+    #[inline]
+    pub fn broadcast_from(&self, subscription: &BroadcastSubscription<M>, message: M) {
+        self.do_broadcast(Some(subscription.id), message);
+    }
+
+    /// Broadcast a message to all the subscribers.
+    #[inline]
+    pub fn broadcast(&self, message: M) {
+        self.do_broadcast(None, message);
     }
 }
 
@@ -324,6 +345,30 @@ mod tests {
         assert_eq!(TestMessage::A, sub1.recv().unwrap());
         assert_eq!(TestMessage::B, sub1.recv().unwrap());
         assert_eq!(TestMessage::C, sub1.recv().unwrap());
+        assert!(dbg!(sub1.try_recv()).is_none());
+
+        assert_eq!(TestMessage::A, sub2.recv().unwrap());
+        assert_eq!(TestMessage::C, sub2.recv().unwrap());
+        assert!(dbg!(sub2.try_recv()).is_none());
+
+        assert_eq!(TestMessage::B, sub3.recv().unwrap());
+        assert_eq!(TestMessage::C, sub3.recv().unwrap());
+        assert!(dbg!(sub3.try_recv()).is_none());
+    }
+
+    #[test]
+    #[ntest::timeout(100)]
+    fn subscriber_broadcasts_dont_circle_back() {
+        let broadcaster = Broadcaster::<TestMessage>::new();
+
+        let sub1 = broadcaster.subscribe("one", TestChannel::All);
+        let sub2 = broadcaster.subscribe("two", TestChannel::A);
+        let sub3 = broadcaster.subscribe("three", TestChannel::B);
+
+        sub1.broadcast(TestMessage::A);
+        sub1.broadcast(TestMessage::B);
+        sub1.broadcast(TestMessage::C);
+
         assert!(dbg!(sub1.try_recv()).is_none());
 
         assert_eq!(TestMessage::A, sub2.recv().unwrap());

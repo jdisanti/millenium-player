@@ -50,7 +50,7 @@ impl PlayerThread {
         let device = match create_device(preferred_output_device_name.as_deref()) {
             Ok(device) => device,
             Err(err) => {
-                broadcaster.broadcast(PlayerMessage::EventAudioDeviceCreationFailed(
+                player_sub.broadcast(PlayerMessage::EventAudioDeviceCreationFailed(
                     err.source.into(),
                 ));
                 err.fallback_device
@@ -101,8 +101,7 @@ impl PlayerThread {
             while let Some(message) = self.device_sub.try_recv() {
                 match message {
                     AudioDeviceMessage::Error(err) => {
-                        self.resources
-                            .broadcaster
+                        self.player_sub
                             .broadcast(PlayerMessage::EventAudioDeviceFailed(format!("{err}")));
                         break;
                     }
