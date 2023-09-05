@@ -28,26 +28,59 @@ interface Playing {
     };
 }
 
-const ButtonPlay = (props: { playing: boolean }) => {
-    const play = Message.send.bind(null, "PlayCurrent", null);
-    const pause = Message.send.bind(null, "PauseCurrent", null);
-    if (props.playing) {
-        return (
-            <button
-                onClick={pause}
-                class="media-control media-control-pause"
-                dangerouslySetInnerHTML={{ __html: "&#x23F8;" }}
-            ></button>
-        );
-    } else {
-        return (
-            <button
-                onClick={play}
-                class="media-control media-control-play"
-                dangerouslySetInnerHTML={{ __html: "&#x23F5;" }}
-            ></button>
-        );
+const MediaControlButton = (props: { type: string; disabled: boolean }) => {
+    const varieties: {
+        [key: string]: { ariaLabel: string; className: string };
+    } = {
+        MediaControlSkipBack: {
+            ariaLabel: "Skip back",
+            className: "media-control-skip-back",
+        },
+        MediaControlBack: {
+            ariaLabel: "Back",
+            className: "media-control-back",
+        },
+        MediaControlPlay: {
+            ariaLabel: "Play",
+            className: "media-control-play",
+        },
+        MediaControlPause: {
+            ariaLabel: "Pause",
+            className: "media-control-pause",
+        },
+        MediaControlStop: {
+            ariaLabel: "Stop",
+            className: "media-control-stop",
+        },
+        MediaControlForward: {
+            ariaLabel: "Forward",
+            className: "media-control-forward",
+        },
+        MediaControlSkipForward: {
+            ariaLabel: "Skip forward",
+            className: "media-control-skip-forward",
+        },
+    };
+    const button = varieties[props.type];
+    if (!button) {
+        throw new Error(`Unknown media control type: ${props.type}`);
     }
+    const onClick = Message.send.bind(null, props.type, null);
+    return (
+        <button
+            aria-label={button.ariaLabel}
+            onClick={onClick}
+            class={"media-control " + button.className}
+            disabled={props.disabled}
+        >
+            <i></i>
+        </button>
+    );
+};
+
+const MediaControlButtonPausePlay = (props: { playing: boolean }) => {
+    const type = props.playing ? "MediaControlPause" : "MediaControlPlay";
+    return <MediaControlButton type={type} disabled={false} />;
 };
 
 const SimplePlayer = (props: { playing: Playing }) => {
@@ -62,7 +95,17 @@ const SimplePlayer = (props: { playing: Playing }) => {
                 /
                 <Time time_secs={props.playing.status.duration_secs || 0} />
             </p>
-            <ButtonPlay playing={props.playing.status.playing} />
+            <MediaControlButton type="MediaControlSkipBack" disabled={false} />
+            <MediaControlButton type="MediaControlBack" disabled={false} />
+            <MediaControlButtonPausePlay
+                playing={props.playing.status.playing}
+            />
+            <MediaControlButton type="MediaControlStop" disabled={false} />
+            <MediaControlButton type="MediaControlForward" disabled={false} />
+            <MediaControlButton
+                type="MediaControlSkipForward"
+                disabled={false}
+            />
         </>
     );
 };

@@ -72,10 +72,14 @@ pub type SharedUiResources = Rc<RefCell<UiResources>>;
 pub enum UiMessage {
     Quit,
     DragWindowStart,
-    PlayCurrent,
-    PauseCurrent,
-    StopCurrent,
-    SeekCurrent { position: usize },
+    MediaControlBack,
+    MediaControlForward,
+    MediaControlPause,
+    MediaControlPlay,
+    MediaControlSeek { position: usize },
+    MediaControlSkipBack,
+    MediaControlSkipForward,
+    MediaControlStop,
     LoadLocations { locations: Vec<Location> },
 }
 

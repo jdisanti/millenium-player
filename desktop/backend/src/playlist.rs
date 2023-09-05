@@ -118,9 +118,13 @@ impl PlaylistManager {
         }
         while let Some(message) = self.ui_sub.try_recv() {
             match message {
-                UiMessage::PauseCurrent => self.player_sub.broadcast(PlayerMessage::CommandPause),
-                UiMessage::PlayCurrent => self.player_sub.broadcast(PlayerMessage::CommandResume),
                 UiMessage::LoadLocations { locations } => self.load_locations(locations),
+                UiMessage::MediaControlPause => {
+                    self.player_sub.broadcast(PlayerMessage::CommandPause)
+                }
+                UiMessage::MediaControlPlay => {
+                    self.player_sub.broadcast(PlayerMessage::CommandResume)
+                }
                 _ => {}
             }
         }
