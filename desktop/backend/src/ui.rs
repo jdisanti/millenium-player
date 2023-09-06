@@ -27,6 +27,7 @@ use millenium_core::{
     },
 };
 use std::{
+    borrow::Cow,
     cell::RefCell,
     rc::Rc,
     time::{Duration, Instant},
@@ -68,6 +69,7 @@ impl Default for UiResources {
 pub type SharedUiResources = Rc<RefCell<UiResources>>;
 
 #[derive(Clone, Debug, serde::Deserialize)]
+#[cfg_attr(test, derive(PartialEq))]
 #[serde(tag = "kind")]
 pub enum UiMessage {
     Quit,
@@ -76,11 +78,27 @@ pub enum UiMessage {
     MediaControlForward,
     MediaControlPause,
     MediaControlPlay,
-    MediaControlSeek { position: usize },
+    MediaControlSeek {
+        position: usize,
+    },
     MediaControlSkipBack,
     MediaControlSkipForward,
     MediaControlStop,
-    LoadLocations { locations: Vec<Location> },
+    LoadLocations {
+        locations: Vec<Location>,
+    },
+    ShowAlert {
+        level: AlertLevel,
+        message: Cow<'static, str>,
+    },
+}
+
+#[derive(Copy, Clone, Debug, serde::Deserialize)]
+#[cfg_attr(test, derive(Eq, PartialEq))]
+pub enum AlertLevel {
+    Info,
+    Warn,
+    Error,
 }
 
 impl BroadcastMessage for UiMessage {
@@ -276,6 +294,18 @@ impl Ui {
                 UiMessage::Quit => return Some(ControlFlow::Exit),
                 UiMessage::DragWindowStart => {
                     self.main_web_view.window().drag_window().unwrap();
+                }
+                UiMessage::ShowAlert { level, message } => {
+                    let (level, title) = match level {
+                        AlertLevel::Info => (rfd::MessageLevel::Info, ""),
+                        AlertLevel::Warn => (rfd::MessageLevel::Warning, "Caution"),
+                        AlertLevel::Error => (rfd::MessageLevel::Error, "Error"),
+                    };
+                    rfd::MessageDialog::new()
+                        .set_level(level)
+                        .set_title(title)
+                        .set_description(&message)
+                        .show();
                 }
                 _ => {}
             }

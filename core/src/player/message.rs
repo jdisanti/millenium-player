@@ -98,7 +98,38 @@ impl BroadcastMessage for PlayerMessage {
     }
 }
 
+#[cfg(feature = "test-util")]
+impl PartialEq for PlayerMessage {
+    fn eq(&self, other: &Self) -> bool {
+        use PlayerMessage::*;
+        match (self, other) {
+            (CommandQuit, CommandQuit) => true,
+            (CommandLoadAndPlayLocation(l), CommandLoadAndPlayLocation(r)) => l == r,
+            (CommandPause, CommandPause) => true,
+            (CommandResume, CommandResume) => true,
+            (CommandStop, CommandStop) => true,
+
+            (EventMetadataLoaded(l), EventMetadataLoaded(r)) => l == r,
+            (EventStartedTrack, EventStartedTrack) => true,
+            (EventFinishedTrack, EventFinishedTrack) => true,
+
+            (UpdatePlaybackStatus(l), UpdatePlaybackStatus(r)) => l == r,
+
+            (UpdateWaveform(_), UpdateWaveform(_))
+            | (EventAudioDeviceCreationFailed(_), EventAudioDeviceCreationFailed(_))
+            | (EventFailedToLoadLocation(_), EventFailedToLoadLocation(_))
+            | (EventFailedToDecodeAudio(_), EventFailedToDecodeAudio(_))
+            | (EventAudioDeviceFailed(_), EventAudioDeviceFailed(_)) => {
+                core::mem::discriminant(self) == core::mem::discriminant(other)
+            }
+
+            _ => false,
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, Default, serde::Serialize)]
+#[cfg_attr(feature = "test-util", derive(PartialEq))]
 pub struct PlaybackStatus {
     pub playing: bool,
     pub position_secs: f64,

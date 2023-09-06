@@ -24,6 +24,7 @@ publish = false
 [features]
 default = []
 aac = ["symphonia/aac"]
+test-util = []
 
 [dependencies]
 base64 = "0.21.2"

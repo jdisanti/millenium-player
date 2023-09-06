@@ -20,7 +20,7 @@ use symphonia::core::meta::{StandardTagKey, StandardVisualKey};
 pub struct MetadataConversionError(&'static str);
 
 #[derive(Clone, Debug, Default)]
-#[cfg_attr(test, derive(PartialEq, Eq))]
+#[cfg_attr(any(test, feature = "test-util"), derive(PartialEq, Eq))]
 pub struct Metadata {
     pub album: Option<String>,
     pub album_artist: Option<String>,
@@ -125,7 +125,7 @@ impl From<&symphonia::core::meta::Tag> for Tag {
 }
 
 #[derive(Clone)]
-#[cfg_attr(test, derive(PartialEq, Eq))]
+#[cfg_attr(any(test, feature = "test-util"), derive(PartialEq, Eq))]
 pub struct EmbeddedImage {
     pub mime_type: String,
     pub tags: BTreeSet<Tag>,
