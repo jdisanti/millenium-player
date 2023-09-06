@@ -141,11 +141,6 @@ impl Sink {
 
                 let mut output_buffer = self.output_buffer.lock().unwrap();
                 output_buffer.extend(&chunk);
-            } else {
-                let output_buffer = self.output_buffer.lock().unwrap();
-                if !output_buffer.is_end_of_stream() {
-                    log::warn!("not decoding audio fast enough to satisfy output device");
-                }
             }
         }
     }
@@ -166,7 +161,7 @@ impl Sink {
     }
 
     /// Flushes any remaining audio data to the audio device.
-    pub fn flush(&self, end_of_stream: bool) {
+    pub fn flush(&self) {
         let mut input_buffer = self.input_buffer.lock().unwrap();
         if input_buffer.frame_count() == 0 {
             return;
@@ -189,7 +184,6 @@ impl Sink {
 
         let mut output_buffer = self.output_buffer.lock().unwrap();
         output_buffer.extend(&chunk);
-        output_buffer.set_end_of_stream(end_of_stream);
         let _ = (output_buffer, chunk);
 
         input_buffer.clear();
@@ -253,7 +247,6 @@ where
 pub struct BoxAudioBuffer {
     format: SampleFormat,
     inner: Box<dyn Any + Send>,
-    end_of_stream: bool,
 }
 
 impl BoxAudioBuffer {
@@ -262,7 +255,6 @@ impl BoxAudioBuffer {
         Self {
             format,
             inner: Box::new(buffer),
-            end_of_stream: false,
         }
     }
 
@@ -284,18 +276,7 @@ impl BoxAudioBuffer {
                 }
                 _ => unreachable!("{}", format),
             },
-            end_of_stream: false,
         }
-    }
-
-    /// True if this buffer is the end of the stream.
-    pub fn is_end_of_stream(&self) -> bool {
-        self.end_of_stream
-    }
-
-    /// Mark the buffer as "end of stream".
-    pub fn set_end_of_stream(&mut self, value: bool) {
-        self.end_of_stream = value;
     }
 
     /// Extends this buffer with the given source buffer.

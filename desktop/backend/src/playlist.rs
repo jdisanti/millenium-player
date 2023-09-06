@@ -204,7 +204,6 @@ impl PlaylistManager {
             }
             PlaybackMode::RepeatOne => {
                 self.restart_current_track();
-                return;
             }
             PlaybackMode::RepeatAll => {
                 unimplemented!()
@@ -245,7 +244,6 @@ impl PlaylistManager {
             }
             PlaybackMode::RepeatOne => {
                 self.restart_current_track();
-                return;
             }
             PlaybackMode::RepeatAll => {
                 unimplemented!()
@@ -288,7 +286,7 @@ impl PlaylistManager {
 
         self.playlist = Playlist {
             entries,
-            current_id: current_id,
+            current_id,
             current_index,
         };
 
