@@ -12,7 +12,7 @@
 // You should have received a copy of the GNU General Public License along with Millenium Player.
 // If not, see <https://www.gnu.org/licenses/>.
 
-use crate::{broadcast::Broadcaster, player::message::PlayerMessage, player::PlayerThreadError};
+use crate::{broadcast::Broadcaster, message::PlayerMessage, player::PlayerThreadError};
 use std::any::Any;
 use std::sync::{Arc, Weak};
 use std::thread;

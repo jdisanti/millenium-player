@@ -13,7 +13,6 @@
 // If not, see <https://www.gnu.org/licenses/>.
 
 mod handle;
-pub mod message;
 mod state;
 mod thread;
 pub mod waveform;

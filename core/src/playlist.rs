@@ -12,12 +12,12 @@
 // You should have received a copy of the GNU General Public License along with Millenium Player.
 // If not, see <https://www.gnu.org/licenses/>.
 
-use crate::ui::{AlertLevel, UiMessage};
-use millenium_core::{
+use crate::message::{AlertLevel, UiMessage};
+use crate::{
     broadcast::{BroadcastSubscription, Broadcaster, NoChannels},
     location::Location,
+    message::{PlaybackStatus, PlayerMessage, PlayerMessageChannel},
     metadata::Metadata,
-    player::message::{PlaybackStatus, PlayerMessage, PlayerMessageChannel},
 };
 use std::{ops::Deref, time::Duration};
 

@@ -12,22 +12,17 @@
 // You should have received a copy of the GNU General Public License along with Millenium Player.
 // If not, see <https://www.gnu.org/licenses/>.
 
-use crate::{
-    args::Mode, error::FatalError, ipc::InternalProtocol, playlist::PlaylistManager, APP_TITLE,
-};
+use crate::{args::Mode, error::FatalError, ipc::InternalProtocol, APP_TITLE};
 use camino::Utf8Path;
 use millenium_core::{
     broadcast::{BroadcastMessage, BroadcastSubscription, Broadcaster, NoChannels},
     location::Location,
+    message::{AlertLevel, PlaybackStatus, PlayerMessage, PlayerMessageChannel, UiMessage},
     metadata::Metadata,
-    player::{
-        message::{PlaybackStatus, PlayerMessage, PlayerMessageChannel},
-        waveform::Waveform,
-        PlayerThread, PlayerThreadHandle,
-    },
+    player::{waveform::Waveform, PlayerThread, PlayerThreadHandle},
+    playlist::PlaylistManager,
 };
 use std::{
-    borrow::Cow,
     cell::RefCell,
     rc::Rc,
     time::{Duration, Instant},
@@ -67,51 +62,6 @@ impl Default for UiResources {
 }
 
 pub type SharedUiResources = Rc<RefCell<UiResources>>;
-
-#[derive(Clone, Debug, serde::Deserialize)]
-#[cfg_attr(test, derive(PartialEq))]
-#[serde(tag = "kind")]
-pub enum UiMessage {
-    Quit,
-    DragWindowStart,
-    MediaControlBack,
-    MediaControlForward,
-    MediaControlPause,
-    MediaControlPlay,
-    MediaControlSeek {
-        position: usize,
-    },
-    MediaControlSkipBack,
-    MediaControlSkipForward,
-    MediaControlStop,
-    LoadLocations {
-        locations: Vec<Location>,
-    },
-    ShowAlert {
-        level: AlertLevel,
-        message: Cow<'static, str>,
-    },
-}
-
-#[derive(Copy, Clone, Debug, serde::Deserialize)]
-#[cfg_attr(test, derive(Eq, PartialEq))]
-pub enum AlertLevel {
-    Info,
-    Warn,
-    Error,
-}
-
-impl BroadcastMessage for UiMessage {
-    type Channel = NoChannels;
-
-    fn channel(&self) -> Self::Channel {
-        NoChannels
-    }
-
-    fn frequent(&self) -> bool {
-        false
-    }
-}
 
 pub struct Ui {
     /// MacOS has the special "always at the top" menu bar that needs to get populated.

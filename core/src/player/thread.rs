@@ -12,15 +12,17 @@
 // You should have received a copy of the GNU General Public License along with Millenium Player.
 // If not, see <https://www.gnu.org/licenses/>.
 
-use super::message::{PlayerMessage, PlayerMessageChannel};
-use super::state::StateManager;
-use super::waveform::{Waveform, WaveformCalculator};
-use super::{PlayerThreadError, PlayerThreadHandle};
 use crate::audio::device::{
     create_device, AudioDevice, AudioDeviceMessage, AudioDeviceMessageChannel,
 };
 use crate::audio::sink::Sink;
 use crate::broadcast::{BroadcastSubscription, Broadcaster};
+use crate::message::{PlayerMessage, PlayerMessageChannel};
+use crate::player::{
+    state::StateManager,
+    waveform::{Waveform, WaveformCalculator},
+    {PlayerThreadError, PlayerThreadHandle},
+};
 use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::Duration;

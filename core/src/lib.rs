@@ -24,5 +24,11 @@ pub mod location;
 /// Audio player thread.
 pub mod player;
 
+/// Playlist management.
+pub mod playlist;
+
+/// Message types.
+pub mod message;
+
 /// Audio metadata/tags.
 pub mod metadata;

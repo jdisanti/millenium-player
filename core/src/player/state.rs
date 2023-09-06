@@ -15,11 +15,8 @@
 use crate::{
     audio::source::{AudioDecoderSource, PreferredFormat},
     location::Location,
-    player::{
-        message::{PlaybackStatus, PlayerMessage},
-        thread::PlayerThreadResources,
-        waveform::WaveformCalculator,
-    },
+    message::{PlaybackStatus, PlayerMessage},
+    player::{thread::PlayerThreadResources, waveform::WaveformCalculator},
 };
 use std::{
     mem,
