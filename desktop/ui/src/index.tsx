@@ -16,6 +16,10 @@ import { Component, render } from "preact";
 import { IpcFetchInterval, Message } from "./ipc";
 import { Waveform } from "./waveform";
 import { Time } from "./component/time";
+import {
+    MediaControlButton,
+    MediaControlButtonPausePlay,
+} from "./component/media-control";
 
 interface Playing {
     title?: string;
@@ -27,61 +31,6 @@ interface Playing {
         duration_secs?: number;
     };
 }
-
-const MediaControlButton = (props: { type: string; disabled: boolean }) => {
-    const varieties: {
-        [key: string]: { ariaLabel: string; className: string };
-    } = {
-        MediaControlSkipBack: {
-            ariaLabel: "Skip back",
-            className: "media-control-skip-back",
-        },
-        MediaControlBack: {
-            ariaLabel: "Back",
-            className: "media-control-back",
-        },
-        MediaControlPlay: {
-            ariaLabel: "Play",
-            className: "media-control-play",
-        },
-        MediaControlPause: {
-            ariaLabel: "Pause",
-            className: "media-control-pause",
-        },
-        MediaControlStop: {
-            ariaLabel: "Stop",
-            className: "media-control-stop",
-        },
-        MediaControlForward: {
-            ariaLabel: "Forward",
-            className: "media-control-forward",
-        },
-        MediaControlSkipForward: {
-            ariaLabel: "Skip forward",
-            className: "media-control-skip-forward",
-        },
-    };
-    const button = varieties[props.type];
-    if (!button) {
-        throw new Error(`Unknown media control type: ${props.type}`);
-    }
-    const onClick = Message.send.bind(null, props.type, null);
-    return (
-        <button
-            aria-label={button.ariaLabel}
-            onClick={onClick}
-            class={"media-control " + button.className}
-            disabled={props.disabled}
-        >
-            <i></i>
-        </button>
-    );
-};
-
-const MediaControlButtonPausePlay = (props: { playing: boolean }) => {
-    const type = props.playing ? "MediaControlPause" : "MediaControlPlay";
-    return <MediaControlButton type={type} disabled={false} />;
-};
 
 const SimplePlayer = (props: { playing: Playing }) => {
     return (

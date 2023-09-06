@@ -16,7 +16,7 @@ use millenium_core::{
     broadcast::{BroadcastSubscription, Broadcaster, NoChannels},
     location::Location,
     metadata::Metadata,
-    player::message::{PlayerMessage, PlayerMessageChannel},
+    player::message::{PlaybackStatus, PlayerMessage, PlayerMessageChannel},
 };
 use std::{ops::Deref, time::Duration};
 
@@ -81,8 +81,24 @@ pub enum PlaybackMode {
 #[derive(Default)]
 pub struct Playlist {
     entries: Vec<PlaylistEntry>,
-    _current_id: Option<PlaylistEntryId>,
-    _current_index: Option<PlaylistIndex>,
+    current_id: Option<PlaylistEntryId>,
+    current_index: Option<PlaylistIndex>,
+}
+
+impl Playlist {
+    pub fn clear_current(&mut self) {
+        self.current_id = None;
+        self.current_index = None;
+    }
+
+    pub fn set_current_index(&mut self, index: PlaylistIndex) {
+        self.current_index = Some(index);
+        self.current_id = Some(self.entries[index.0].id);
+    }
+
+    pub fn current(&self) -> Option<(PlaylistEntryId, PlaylistIndex)> {
+        self.current_id.zip(self.current_index)
+    }
 }
 
 pub struct PlaylistManager {
@@ -90,6 +106,8 @@ pub struct PlaylistManager {
     playlist: Playlist,
     player_sub: BroadcastSubscription<PlayerMessage>,
     ui_sub: BroadcastSubscription<UiMessage>,
+    playback_mode: PlaybackMode,
+    playback_status: Option<PlaybackStatus>,
 }
 
 impl PlaylistManager {
@@ -97,14 +115,18 @@ impl PlaylistManager {
         player_broadcaster: Broadcaster<PlayerMessage>,
         ui_broadcaster: Broadcaster<UiMessage>,
     ) -> Self {
-        let player_sub =
-            player_broadcaster.subscribe("playlist-manager", PlayerMessageChannel::Events);
+        let player_sub = player_broadcaster.subscribe(
+            "playlist-manager",
+            PlayerMessageChannel::Events | PlayerMessageChannel::FrequentUpdates,
+        );
         let ui_sub = ui_broadcaster.subscribe("playlist-manager", NoChannels);
         Self {
             next_id: 0,
             playlist: Playlist::default(),
             player_sub,
             ui_sub,
+            playback_mode: PlaybackMode::Normal,
+            playback_status: None,
         }
     }
 
@@ -113,21 +135,35 @@ impl PlaylistManager {
             #[allow(clippy::single_match)]
             match message {
                 PlayerMessage::EventFinishedTrack => self.start_next_track(),
+                PlayerMessage::UpdatePlaybackStatus(status) => {
+                    self.playback_status = Some(status);
+                }
                 _ => {}
             }
         }
         while let Some(message) = self.ui_sub.try_recv() {
             match message {
                 UiMessage::LoadLocations { locations } => self.load_locations(locations),
+                UiMessage::MediaControlSkipBack => self.control_skip_back(),
+                UiMessage::MediaControlBack => log::error!("back not implemented"),
                 UiMessage::MediaControlPause => {
                     self.player_sub.broadcast(PlayerMessage::CommandPause)
                 }
                 UiMessage::MediaControlPlay => {
                     self.player_sub.broadcast(PlayerMessage::CommandResume)
                 }
+                UiMessage::MediaControlStop => log::error!("stop not implemented"),
+                UiMessage::MediaControlForward => log::error!("forward not implemented"),
+                UiMessage::MediaControlSkipForward => self.start_next_track(),
                 _ => {}
             }
         }
+    }
+
+    fn part_way_into_track(&self) -> bool {
+        self.playback_status
+            .map(|status| status.position_secs > 7.0)
+            .unwrap_or(false)
     }
 
     fn next_id(&mut self) -> PlaylistEntryId {
@@ -135,7 +171,87 @@ impl PlaylistManager {
         PlaylistEntryId(self.next_id)
     }
 
-    fn start_next_track(&mut self) {}
+    fn control_skip_back(&mut self) {
+        if self.part_way_into_track() {
+            self.restart_current_track();
+        } else {
+            self.start_previous_track();
+        }
+    }
+
+    fn restart_current_track(&mut self) {
+        if let Some(current_index) = self.playlist.current_index {
+            self.start_track(current_index);
+        }
+    }
+
+    fn start_previous_track(&mut self) {
+        if self.playlist.current_index.is_none() {
+            return;
+        }
+
+        let (_current_id, current_index) = self.playlist.current().unwrap();
+        match self.playback_mode {
+            PlaybackMode::Normal => {
+                if *current_index == 0 {
+                    self.stop();
+                } else {
+                    self.start_track(PlaylistIndex(*current_index - 1));
+                }
+            }
+            PlaybackMode::Shuffle => {
+                unimplemented!()
+            }
+            PlaybackMode::RepeatOne => {
+                self.restart_current_track();
+                return;
+            }
+            PlaybackMode::RepeatAll => {
+                unimplemented!()
+            }
+        }
+    }
+
+    fn stop(&mut self) {
+        self.playlist.clear_current();
+        self.player_sub.broadcast(PlayerMessage::CommandStop);
+    }
+
+    fn start_track(&mut self, index: PlaylistIndex) {
+        self.playlist.set_current_index(index);
+        self.player_sub
+            .broadcast(PlayerMessage::CommandLoadAndPlayLocation(
+                self.playlist.entries[index.0].location.clone(),
+            ));
+    }
+
+    fn start_next_track(&mut self) {
+        if self.playlist.current_index.is_none() {
+            return;
+        }
+
+        let (_current_id, current_index) = self.playlist.current().unwrap();
+        match self.playback_mode {
+            PlaybackMode::Normal => {
+                let next_index = PlaylistIndex(*current_index + 1);
+                if next_index.0 >= self.playlist.entries.len() {
+                    self.stop();
+                } else {
+                    self.start_track(next_index);
+                }
+            }
+            PlaybackMode::Shuffle => {
+                unimplemented!()
+            }
+            PlaybackMode::RepeatOne => {
+                self.restart_current_track();
+                return;
+            }
+            PlaybackMode::RepeatAll => {
+                unimplemented!()
+            }
+        }
+    }
 
     fn load_locations(&mut self, locations: Vec<Location>) {
         let filtered_locations: Vec<Location> = locations
@@ -172,8 +288,8 @@ impl PlaylistManager {
 
         self.playlist = Playlist {
             entries,
-            _current_id: current_id,
-            _current_index: current_index,
+            current_id: current_id,
+            current_index,
         };
 
         if current_id.is_some() {
