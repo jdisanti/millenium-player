@@ -66,8 +66,17 @@ pub struct WaveformCalculator<const BIN_COUNT: usize = DEFAULT_BINS> {
     amplitude: AmplitudeCalculator<BIN_COUNT>,
 }
 
+impl<const BIN_COUNT: usize> Drop for WaveformCalculator<BIN_COUNT> {
+    fn drop(&mut self) {
+        log::info!("dropping waveform calculator");
+    }
+}
+
 impl<const BIN_COUNT: usize> WaveformCalculator<BIN_COUNT> {
     pub fn new(sample_rate: SampleRate) -> Self {
+        log::info!(
+            "creating waveform calculator with {BIN_COUNT} bins and a sample rate of {sample_rate}"
+        );
         Self {
             spectrum: SpectrumCalculator::new(sample_rate),
             amplitude: AmplitudeCalculator::new(sample_rate),
@@ -157,13 +166,13 @@ impl<const BIN_COUNT: usize> SpectrumCalculator<BIN_COUNT> {
         );
 
         const MIN_RANGE_HZ: f32 = 20.0;
-        const MAX_RANGE_HZ: f32 = 20_000.0;
+        let max_range_hz: f32 = f32::min(self.sample_rate as f32 / 2.0, 20_000.0);
 
         Self::apply_hamming_window(&mut self.calc_buffer);
         let spectrum = samples_fft_to_spectrum(
             &self.calc_buffer,
             self.sample_rate,
-            FrequencyLimit::Range(MIN_RANGE_HZ, MAX_RANGE_HZ),
+            FrequencyLimit::Range(MIN_RANGE_HZ, max_range_hz),
             None,
         )
         .expect("failed to calculate spectrum");

@@ -35,7 +35,7 @@ use std::{
         atomic::{self, AtomicBool, AtomicU64},
         Arc, Mutex,
     },
-    time::Duration,
+    time::{Duration, Instant},
 };
 
 const PREFERRED_SAMPLE_RATES: &[u32] = &[48000, 44100, 88200, 96000];
@@ -106,6 +106,7 @@ impl Channel for AudioDeviceMessageChannel {
 #[derive(Clone, Debug)]
 pub enum AudioDeviceMessage {
     Error(Arc<AudioDeviceError>),
+    EventAudioDeviceIdle,
     EventPlaybackFinished,
     RequestAudioData,
 }
@@ -116,16 +117,15 @@ impl BroadcastMessage for AudioDeviceMessage {
     fn channel(&self) -> Self::Channel {
         match self {
             Self::Error(_) => AudioDeviceMessageChannel::Errors,
-            Self::EventPlaybackFinished => AudioDeviceMessageChannel::Events,
+            Self::EventAudioDeviceIdle | Self::EventPlaybackFinished => {
+                AudioDeviceMessageChannel::Events
+            }
             Self::RequestAudioData => AudioDeviceMessageChannel::Requests,
         }
     }
 
     fn frequent(&self) -> bool {
-        matches!(
-            self,
-            Self::EventPlaybackFinished | AudioDeviceMessage::RequestAudioData
-        )
+        matches!(self, AudioDeviceMessage::RequestAudioData)
     }
 }
 
@@ -348,18 +348,17 @@ impl<'a> StreamBuilder<'a> {
         let desired_output_buffer_size =
             (DESIRED_BUFFER_LENGTH.as_secs_f32() * config.sample_rate().0 as f32) as usize;
         let channels = config.channels() as usize;
+        let mut write_data_context = WriteAudioDataContext {
+            channels,
+            desired_output_buffer_size,
+            broadcaster: broadcaster.clone(),
+            frames_consumed,
+            state: DeviceState::Idle,
+        };
         let write_data = {
-            let broadcaster = broadcaster.clone();
             move |data: &mut [S], _info: &OutputCallbackInfo| {
                 let mut output_buffer = output_buffer.lock().unwrap();
-                write_audio_data(
-                    channels,
-                    desired_output_buffer_size,
-                    broadcaster.clone(),
-                    frames_consumed.clone(),
-                    &mut output_buffer,
-                    data,
-                );
+                write_audio_data(&mut write_data_context, &mut output_buffer, data);
             }
         };
 
@@ -458,7 +457,6 @@ impl BroadcastingAudioDevice for CpalAudioDevice {
 
 impl AudioDevice for CpalAudioDevice {
     fn create_sink(&self, input_sample_rate: SampleRate, input_channels: ChannelCount) -> Sink {
-        self.output_buffer.lock().unwrap().set_end_of_stream(false);
         Sink::new(
             input_sample_rate,
             input_channels,
@@ -513,25 +511,42 @@ impl AudioDevice for CpalAudioDevice {
     }
 }
 
-// TODO unit test
-fn write_audio_data<S>(
+enum DeviceState {
+    Idle,
+    Playing,
+    SilenceSince(Instant),
+}
+
+struct WriteAudioDataContext {
     channels: usize,
     desired_output_buffer_size: usize,
     broadcaster: Broadcaster<AudioDeviceMessage>,
     frames_consumed: Arc<AtomicU64>,
+    state: DeviceState,
+}
+
+// TODO unit test
+fn write_audio_data<S>(
+    WriteAudioDataContext {
+        channels,
+        desired_output_buffer_size,
+        broadcaster,
+        frames_consumed,
+        state,
+    }: &mut WriteAudioDataContext,
     box_output_buffer: &mut BoxAudioBuffer,
     data: &mut [S],
 ) where
     S: Sample + 'static,
 {
     let output_buffer = box_output_buffer.expect_mut::<S>();
-    if output_buffer.len() < desired_output_buffer_size {
+    if output_buffer.len() < *desired_output_buffer_size {
         broadcaster.broadcast(AudioDeviceMessage::RequestAudioData);
     }
 
     let len_to_consume = usize::min(output_buffer.len(), data.len());
     frames_consumed.fetch_add(
-        len_to_consume as u64 / channels as u64,
+        len_to_consume as u64 / *channels as u64,
         atomic::Ordering::SeqCst,
     );
     let source = output_buffer.drain(0..len_to_consume);
@@ -543,12 +558,24 @@ fn write_audio_data<S>(
         *into = S::EQUILIBRIUM;
         filled_in_silence = true;
     }
-    if filled_in_silence && !box_output_buffer.is_end_of_stream() {
-        log::warn!(
-            "filled output device with silence (this is either a performance issue or a bug)"
-        );
-    } else if filled_in_silence {
-        broadcaster.broadcast(AudioDeviceMessage::EventPlaybackFinished);
+
+    if !filled_in_silence {
+        *state = DeviceState::Playing;
+    }
+    match state {
+        DeviceState::Idle => {}
+        DeviceState::Playing => {
+            if filled_in_silence {
+                broadcaster.broadcast(AudioDeviceMessage::EventPlaybackFinished);
+                *state = DeviceState::SilenceSince(Instant::now());
+            }
+        }
+        DeviceState::SilenceSince(start) => {
+            if Instant::now() - *start >= Duration::from_secs(5) {
+                broadcaster.broadcast(AudioDeviceMessage::EventAudioDeviceIdle);
+                *state = DeviceState::Idle;
+            }
+        }
     }
 }
 

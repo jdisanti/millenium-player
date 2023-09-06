@@ -13,17 +13,11 @@
 // If not, see <https://www.gnu.org/licenses/>.
 
 use crate::{
-    args::Mode,
-    error::FatalError,
-    ipc::{
-        from_ui::{FromUiMessage, MessageHandler},
-        to_ui::InternalProtocol,
-    },
-    APP_TITLE,
+    args::Mode, error::FatalError, ipc::InternalProtocol, playlist::PlaylistManager, APP_TITLE,
 };
 use camino::Utf8Path;
 use millenium_core::{
-    broadcast::{BroadcastMessage, BroadcastSubscription},
+    broadcast::{BroadcastMessage, BroadcastSubscription, Broadcaster, NoChannels},
     location::Location,
     metadata::Metadata,
     player::{
@@ -39,14 +33,9 @@ use std::{
 };
 use tao::{
     dpi::{LogicalSize, Size},
-    event_loop::{EventLoop, EventLoopBuilder, EventLoopProxy},
+    event_loop::{ControlFlow, EventLoop, EventLoopBuilder},
 };
 use wry::webview::{webview_version, FileDropEvent};
-
-struct Playlist {
-    locations: Vec<Location>,
-    current: Option<usize>,
-}
 
 pub struct UiResources {
     player: Option<PlayerThreadHandle>,
@@ -78,6 +67,34 @@ impl Default for UiResources {
 
 pub type SharedUiResources = Rc<RefCell<UiResources>>;
 
+#[derive(Clone, Debug, serde::Deserialize)]
+#[serde(tag = "kind")]
+pub enum UiMessage {
+    Quit,
+    DragWindowStart,
+    MediaControlBack,
+    MediaControlForward,
+    MediaControlPause,
+    MediaControlPlay,
+    MediaControlSeek { position: usize },
+    MediaControlSkipBack,
+    MediaControlSkipForward,
+    MediaControlStop,
+    LoadLocations { locations: Vec<Location> },
+}
+
+impl BroadcastMessage for UiMessage {
+    type Channel = NoChannels;
+
+    fn channel(&self) -> Self::Channel {
+        NoChannels
+    }
+
+    fn frequent(&self) -> bool {
+        false
+    }
+}
+
 pub struct Ui {
     /// MacOS has the special "always at the top" menu bar that needs to get populated.
     /// Menus aren't needed for the other OSes.
@@ -85,13 +102,14 @@ pub struct Ui {
     _osx_app_menu: OsxAppMenu,
 
     main_web_view: wry::webview::WebView,
-    event_loop: Option<tao::event_loop::EventLoop<FromUiMessage>>,
+    event_loop: Option<tao::event_loop::EventLoop<()>>,
 
     player: Option<PlayerThreadHandle>,
-    player_subscription: BroadcastSubscription<PlayerMessage>,
-    _playlist: Playlist,
+    player_sub: BroadcastSubscription<PlayerMessage>,
+    _ui_broadcaster: Broadcaster<UiMessage>,
+    ui_sub: BroadcastSubscription<UiMessage>,
+    playlist_manager: PlaylistManager,
 
-    message_handler: MessageHandler,
     resources: SharedUiResources,
 }
 
@@ -100,7 +118,10 @@ impl Ui {
         let resources = Rc::new(RefCell::new(UiResources::new()));
         let to_ui = Rc::new(InternalProtocol::new(resources.clone()));
 
-        let event_loop: EventLoop<FromUiMessage> = EventLoopBuilder::with_user_event().build();
+        let ui_broadcaster = Broadcaster::new();
+        let ui_sub = ui_broadcaster.subscribe("ui-backend", NoChannels);
+
+        let event_loop: EventLoop<()> = EventLoopBuilder::new().build();
         let main_window = tao::window::WindowBuilder::new()
             .with_title(APP_TITLE)
             .with_decorations(false)
@@ -110,29 +131,18 @@ impl Ui {
             .with_visible(false) // start invisible
             .build(&event_loop)
             .map_err(|err| FatalError::new("failed to create window", err))?;
-        let main_web_view = create_webview(main_window, event_loop.create_proxy(), to_ui)?;
+        let main_web_view = create_webview(main_window, ui_broadcaster.clone(), to_ui)?;
 
-        let playlist = match mode {
-            Mode::Simple { locations } => {
-                let filtered_locations: Vec<Location> = locations
-                    .iter()
-                    .cloned()
-                    .filter(|location| !location.inferred_type().is_unknown())
-                    // TODO: remove the following filter and load playlists
-                    .filter(|location| !location.inferred_type().is_playlist())
-                    .collect();
-                if filtered_locations.is_empty() && !locations.is_empty() {
-                    rfd::MessageDialog::new()
-                        .set_level(rfd::MessageLevel::Error)
-                        .set_title("Error")
-                        .set_description("None of the given files are audio or playlist files.")
-                        .show();
-                }
-                Playlist {
-                    current: filtered_locations.get(0).map(|_| Some(0)).unwrap_or(None),
-                    locations: filtered_locations,
-                }
-            }
+        let player = PlayerThread::spawn(None)?;
+        let player_sub = player.broadcaster().subscribe(
+            "ui-backend",
+            PlayerMessageChannel::Events | PlayerMessageChannel::FrequentUpdates,
+        );
+
+        let playlist_manager =
+            PlaylistManager::new(player.broadcaster().clone(), ui_broadcaster.clone());
+        match mode {
+            Mode::Simple { locations } => ui_sub.broadcast(UiMessage::LoadLocations { locations }),
             Mode::Library {
                 storage_path,
                 audio_path,
@@ -140,19 +150,6 @@ impl Ui {
                 let _ = (storage_path, audio_path);
                 unimplemented!("library mode isn't implemented yet")
             }
-        };
-
-        let player = PlayerThread::spawn(None)?;
-        let player_subscription = player.broadcaster().subscribe(
-            "ui-backend",
-            PlayerMessageChannel::Events | PlayerMessageChannel::FrequentUpdates,
-        );
-        if let Some(index) = playlist.current {
-            player
-                .broadcaster()
-                .broadcast(PlayerMessage::CommandLoadAndPlayLocation(
-                    playlist.locations[index].clone(),
-                ));
         }
         resources.borrow_mut().player = Some(player.weak_clone());
 
@@ -164,17 +161,17 @@ impl Ui {
             event_loop: Some(event_loop),
 
             player: Some(player),
-            player_subscription,
-            _playlist: playlist,
+            player_sub,
+            _ui_broadcaster: ui_broadcaster,
+            ui_sub,
+            playlist_manager,
 
-            message_handler: MessageHandler::new(resources.clone()),
             resources,
         })
     }
 
     pub fn run(mut self) -> ! {
         use tao::event::{Event, WindowEvent};
-        use tao::event_loop::ControlFlow;
 
         log::info!("starting event loop");
         let mut start_time = Some(Instant::now());
@@ -193,30 +190,25 @@ impl Ui {
                 ControlFlow::WaitUntil(Instant::now() + Duration::from_millis(1000 / 60));
 
             self.handle_player_messages();
+            if let Some(new_flow) = self.handle_ui_messages() {
+                *control_flow = new_flow;
+            }
+            self.playlist_manager.update();
 
             match event {
                 Event::LoopDestroyed => {
                     if let Some(player) = self.player.take() {
-                        player.broadcaster().broadcast(PlayerMessage::CommandQuit);
+                        self.player_sub.broadcast(PlayerMessage::CommandQuit);
                         if let Err(err) = player.join() {
                             log::error!("{err}");
                         }
                     }
                     log::info!("bye!");
                 }
-                Event::UserEvent(FromUiMessage::Quit)
-                | Event::WindowEvent {
+                Event::WindowEvent {
                     event: WindowEvent::CloseRequested,
                     ..
                 } => *control_flow = ControlFlow::Exit,
-
-                Event::UserEvent(FromUiMessage::DragWindowStart) => {
-                    self.main_web_view.window().drag_window().unwrap()
-                }
-
-                Event::UserEvent(message) => {
-                    self.message_handler.handle(message);
-                }
 
                 _ => (),
             }
@@ -234,7 +226,7 @@ impl Ui {
     }
 
     fn handle_player_messages(&self) {
-        if let Some(message) = self.player_subscription.try_recv() {
+        while let Some(message) = self.player_sub.try_recv() {
             let mut resources = self.resources.borrow_mut();
             if !message.frequent() {
                 log::info!("ui-backend received broadcast message: {message:?}");
@@ -276,6 +268,19 @@ impl Ui {
                 _ => {}
             }
         }
+    }
+
+    fn handle_ui_messages(&self) -> Option<ControlFlow> {
+        while let Some(message) = self.ui_sub.try_recv() {
+            match message {
+                UiMessage::Quit => return Some(ControlFlow::Exit),
+                UiMessage::DragWindowStart => {
+                    self.main_web_view.window().drag_window().unwrap();
+                }
+                _ => {}
+            }
+        }
+        None
     }
 
     fn healthcheck(&mut self) -> Result<(), FatalError> {
@@ -328,8 +333,8 @@ impl OsxAppMenu {
 
 fn create_webview(
     window: tao::window::Window,
-    event_loop_proxy: EventLoopProxy<FromUiMessage>,
-    to_ui: Rc<InternalProtocol>,
+    ui_broadcaster: Broadcaster<UiMessage>,
+    internal_protocol: Rc<InternalProtocol>,
 ) -> Result<wry::webview::WebView, FatalError> {
     log::info!(
         "webview version: {}",
@@ -341,15 +346,17 @@ fn create_webview(
         .with_download_started_handler(|_,_| false)  // don't allow file downloads
         .with_custom_protocol("internal".into(), {
             move |request| {
-                let to_ui = to_ui.clone();
-                Ok(to_ui.handle_request(request))
+                let internal_protocol = internal_protocol.clone();
+                Ok(internal_protocol.handle_request(request))
             }
         })
         .with_ipc_handler({
-            let proxy = event_loop_proxy.clone();
+            let broadcaster = ui_broadcaster.clone();
             move |_window, message| {
-                match serde_json::from_str::<FromUiMessage>(&message) {
-                    Ok(event) => proxy.send_event(event).unwrap(),
+                match serde_json::from_str::<UiMessage>(&message) {
+                    Ok(message) => {
+                        broadcaster.broadcast(message);
+                    }
                     Err(err) => {
                         log::error!("failed to deserialize IPC message from the webview: {err}\nmessage: {message}")
                     }
@@ -362,8 +369,9 @@ fn create_webview(
             if let FileDropEvent::Dropped { paths, .. } = event {
                 let locations = paths.into_iter()
                     .map(|path| Utf8Path::from_path(&path).unwrap().to_string())
+                    .map(Location::path)
                     .collect::<Vec<_>>();
-                event_loop_proxy.send_event(FromUiMessage::LoadLocations { locations }).unwrap();
+                ui_broadcaster.broadcast(UiMessage::LoadLocations { locations });
             }
             true
         })

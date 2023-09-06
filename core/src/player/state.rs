@@ -169,14 +169,15 @@ impl State for StatePlaying {
     fn update(mut self, resources: &mut PlayerThreadResources) -> CurrentState {
         let maybe_next_state = queue_chunks(resources, &mut self.source);
 
-        let waveform_calc = resources.waveform_calculator.as_mut().unwrap();
-        let mut waveform_lock = resources.waveform.lock().unwrap();
-        if waveform_calc.waveform_needs_update(&waveform_lock) {
-            waveform_calc.copy_latest_waveform_into(&mut *waveform_lock);
-            drop(waveform_lock);
-            resources
-                .broadcaster
-                .broadcast(PlayerMessage::UpdateWaveform(resources.waveform.clone()));
+        if let Some(waveform_calc) = resources.waveform_calculator.as_mut() {
+            let mut waveform_lock = resources.waveform.lock().unwrap();
+            if waveform_calc.waveform_needs_update(&waveform_lock) {
+                waveform_calc.copy_latest_waveform_into(&mut *waveform_lock);
+                drop(waveform_lock);
+                resources
+                    .broadcaster
+                    .broadcast(PlayerMessage::UpdateWaveform(resources.waveform.clone()));
+            }
         }
 
         let next_state = if let Some(new_state) = maybe_next_state {
@@ -292,7 +293,7 @@ fn queue_chunks(
                     if recreate_sink {
                         log::info!("recreating the audio sink");
                         if let Some(s) = resources.current_sink.as_ref() {
-                            s.flush(false);
+                            s.flush();
                         }
                         resources.current_sink =
                             Some(resources.device.create_sink(sample_rate, channels));
@@ -303,8 +304,9 @@ fn queue_chunks(
             Ok(None) => {
                 log::info!("finished playing track");
                 if let Some(sink) = resources.current_sink.as_ref() {
-                    sink.flush(true);
+                    sink.flush();
                 }
+                resources.waveform_calculator = None;
                 resources
                     .broadcaster
                     .broadcast(PlayerMessage::EventFinishedTrack);

@@ -16,6 +16,10 @@ import { Component, render } from "preact";
 import { IpcFetchInterval, Message } from "./ipc";
 import { Waveform } from "./waveform";
 import { Time } from "./component/time";
+import {
+    MediaControlButton,
+    MediaControlButtonPausePlay,
+} from "./component/media-control";
 
 interface Playing {
     title?: string;
@@ -27,28 +31,6 @@ interface Playing {
         duration_secs?: number;
     };
 }
-
-const ButtonPlay = (props: { playing: boolean }) => {
-    const play = Message.send.bind(null, "PlayCurrent", null);
-    const pause = Message.send.bind(null, "PauseCurrent", null);
-    if (props.playing) {
-        return (
-            <button
-                onClick={pause}
-                class="media-control media-control-pause"
-                dangerouslySetInnerHTML={{ __html: "&#x23F8;" }}
-            ></button>
-        );
-    } else {
-        return (
-            <button
-                onClick={play}
-                class="media-control media-control-play"
-                dangerouslySetInnerHTML={{ __html: "&#x23F5;" }}
-            ></button>
-        );
-    }
-};
 
 const SimplePlayer = (props: { playing: Playing }) => {
     return (
@@ -62,7 +44,17 @@ const SimplePlayer = (props: { playing: Playing }) => {
                 /
                 <Time time_secs={props.playing.status.duration_secs || 0} />
             </p>
-            <ButtonPlay playing={props.playing.status.playing} />
+            <MediaControlButton type="MediaControlSkipBack" disabled={false} />
+            <MediaControlButton type="MediaControlBack" disabled={false} />
+            <MediaControlButtonPausePlay
+                playing={props.playing.status.playing}
+            />
+            <MediaControlButton type="MediaControlStop" disabled={false} />
+            <MediaControlButton type="MediaControlForward" disabled={false} />
+            <MediaControlButton
+                type="MediaControlSkipForward"
+                disabled={false}
+            />
         </>
     );
 };

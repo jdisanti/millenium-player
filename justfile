@@ -15,7 +15,7 @@ ui-watch:
 build: ui-build rust-build
 
 release: ui-build
-    cargo build --release --bin millenium-player
+    cargo build --release --all-features --bin millenium-player
 
 rust-build:
     cargo build --bin millenium-player

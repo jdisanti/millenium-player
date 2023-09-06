@@ -50,7 +50,7 @@ impl PlayerThread {
         let device = match create_device(preferred_output_device_name.as_deref()) {
             Ok(device) => device,
             Err(err) => {
-                broadcaster.broadcast(PlayerMessage::EventAudioDeviceCreationFailed(
+                player_sub.broadcast(PlayerMessage::EventAudioDeviceCreationFailed(
                     err.source.into(),
                 ));
                 err.fallback_device
@@ -97,23 +97,19 @@ impl PlayerThread {
 
         let mut state_manager = StateManager::new();
         while !state_manager.should_quit() {
-            let mut pause_device = false;
             while let Some(message) = self.device_sub.try_recv() {
                 match message {
                     AudioDeviceMessage::Error(err) => {
-                        self.resources
-                            .broadcaster
+                        self.player_sub
                             .broadcast(PlayerMessage::EventAudioDeviceFailed(format!("{err}")));
                         break;
                     }
-                    AudioDeviceMessage::EventPlaybackFinished => {
-                        pause_device = true;
+                    AudioDeviceMessage::EventPlaybackFinished => {}
+                    AudioDeviceMessage::EventAudioDeviceIdle => {
+                        self.resources.device.pause().unwrap();
                     }
                     _ => {}
                 }
-            }
-            if pause_device {
-                self.resources.device.pause().unwrap();
             }
 
             let next_message = if state_manager.blocked_on_messages() {
