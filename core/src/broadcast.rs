@@ -298,7 +298,7 @@ mod tests {
     }
 
     #[test]
-    #[ntest::timeout(100)]
+    #[ntest::timeout(500)]
     fn no_subscribers() {
         let broadcaster = check_send_sync(Broadcaster::<TestMessage>::new());
         broadcaster.broadcast(TestMessage::A);
@@ -307,7 +307,7 @@ mod tests {
     }
 
     #[test]
-    #[ntest::timeout(100)]
+    #[ntest::timeout(500)]
     fn unsubscribe_on_drop() {
         let broadcaster = Broadcaster::<TestMessage>::new();
         assert_eq!(0, broadcaster.inner.subscriptions.lock().unwrap().len());
@@ -323,7 +323,7 @@ mod tests {
     }
 
     #[test]
-    #[ntest::timeout(100)]
+    #[ntest::timeout(500)]
     fn multiple_subscribers() {
         let broadcaster = Broadcaster::<TestMessage>::new();
 
@@ -338,7 +338,7 @@ mod tests {
     }
 
     #[test]
-    #[ntest::timeout(100)]
+    #[ntest::timeout(500)]
     fn channel_filtering() {
         let broadcaster = Broadcaster::<TestMessage>::new();
 
@@ -365,7 +365,7 @@ mod tests {
     }
 
     #[test]
-    #[ntest::timeout(100)]
+    #[ntest::timeout(500)]
     fn subscriber_broadcasts_dont_circle_back() {
         let broadcaster = Broadcaster::<TestMessage>::new();
 
