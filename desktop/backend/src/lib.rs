@@ -24,8 +24,5 @@ pub mod error;
 /// Inter-process communication with the UI's web view.
 pub mod ipc;
 
-/// Playlist management.
-pub mod playlist;
-
 /// Web view UI.
 pub mod ui;

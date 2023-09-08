@@ -12,11 +12,20 @@
 // You should have received a copy of the GNU General Public License along with Millenium Player.
 // If not, see <https://www.gnu.org/licenses/>.
 
-use super::waveform::Waveform;
-use crate::audio::{device::AudioDeviceError, source::AudioSourceError};
-use crate::broadcast::{BroadcastMessage, Channel};
+use crate::player::waveform::Waveform;
+use crate::{
+    audio::{device::AudioDeviceError, source::AudioSourceError},
+    broadcast::NoChannels,
+};
+use crate::{
+    broadcast::{BroadcastMessage, Channel},
+    playlist::PlaylistMode,
+};
 use crate::{location::Location, metadata::Metadata};
-use std::sync::{Arc, Mutex};
+use std::{
+    borrow::Cow,
+    sync::{Arc, Mutex},
+};
 
 bitflags::bitflags! {
     #[derive(Copy, Clone, Debug, Eq, PartialEq)]
@@ -98,9 +107,88 @@ impl BroadcastMessage for PlayerMessage {
     }
 }
 
+#[cfg(feature = "test-util")]
+impl PartialEq for PlayerMessage {
+    fn eq(&self, other: &Self) -> bool {
+        use PlayerMessage::*;
+        match (self, other) {
+            (CommandQuit, CommandQuit) => true,
+            (CommandLoadAndPlayLocation(l), CommandLoadAndPlayLocation(r)) => l == r,
+            (CommandPause, CommandPause) => true,
+            (CommandResume, CommandResume) => true,
+            (CommandStop, CommandStop) => true,
+
+            (EventMetadataLoaded(l), EventMetadataLoaded(r)) => l == r,
+            (EventStartedTrack, EventStartedTrack) => true,
+            (EventFinishedTrack, EventFinishedTrack) => true,
+
+            (UpdatePlaybackStatus(l), UpdatePlaybackStatus(r)) => l == r,
+
+            (UpdateWaveform(_), UpdateWaveform(_))
+            | (EventAudioDeviceCreationFailed(_), EventAudioDeviceCreationFailed(_))
+            | (EventFailedToLoadLocation(_), EventFailedToLoadLocation(_))
+            | (EventFailedToDecodeAudio(_), EventFailedToDecodeAudio(_))
+            | (EventAudioDeviceFailed(_), EventAudioDeviceFailed(_)) => {
+                core::mem::discriminant(self) == core::mem::discriminant(other)
+            }
+
+            _ => false,
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, Default, serde::Serialize)]
+#[cfg_attr(feature = "test-util", derive(PartialEq))]
 pub struct PlaybackStatus {
     pub playing: bool,
     pub position_secs: f64,
     pub duration_secs: Option<f64>,
+}
+
+#[derive(Clone, Debug, serde::Deserialize)]
+#[cfg_attr(test, derive(PartialEq))]
+#[serde(tag = "kind")]
+pub enum UiMessage {
+    Quit,
+    DragWindowStart,
+    MediaControlBack,
+    MediaControlForward,
+    MediaControlPause,
+    MediaControlPlay,
+    MediaControlSeek {
+        position: usize,
+    },
+    MediaControlSkipBack,
+    MediaControlSkipForward,
+    MediaControlStop,
+    MediaControlPlaylistMode {
+        mode: PlaylistMode,
+    },
+    LoadLocations {
+        locations: Vec<Location>,
+    },
+    ShowAlert {
+        level: AlertLevel,
+        message: Cow<'static, str>,
+    },
+}
+
+#[derive(Copy, Clone, Debug, serde::Deserialize)]
+#[cfg_attr(test, derive(Eq, PartialEq))]
+pub enum AlertLevel {
+    Info,
+    Warn,
+    Error,
+}
+
+impl BroadcastMessage for UiMessage {
+    type Channel = NoChannels;
+
+    fn channel(&self) -> Self::Channel {
+        NoChannels
+    }
+
+    fn frequent(&self) -> bool {
+        false
+    }
 }

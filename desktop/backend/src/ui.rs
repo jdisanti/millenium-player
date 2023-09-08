@@ -12,22 +12,17 @@
 // You should have received a copy of the GNU General Public License along with Millenium Player.
 // If not, see <https://www.gnu.org/licenses/>.
 
-use crate::{
-    args::Mode, error::FatalError, ipc::InternalProtocol, playlist::PlaylistManager, APP_TITLE,
-};
+use crate::{args::Mode, error::FatalError, ipc::InternalProtocol, APP_TITLE};
 use camino::Utf8Path;
 use millenium_core::{
     broadcast::{BroadcastMessage, BroadcastSubscription, Broadcaster, NoChannels},
     location::Location,
-    metadata::Metadata,
-    player::{
-        message::{PlaybackStatus, PlayerMessage, PlayerMessageChannel},
-        waveform::Waveform,
-        PlayerThread, PlayerThreadHandle,
-    },
+    message::{AlertLevel, PlaybackStatus, PlayerMessage, PlayerMessageChannel, UiMessage},
+    player::{waveform::Waveform, PlayerThread, PlayerThreadHandle},
+    playlist::PlaylistManager,
+    state::{State, StateChanged, StateHandle},
 };
 use std::{
-    cell::RefCell,
     rc::Rc,
     time::{Duration, Instant},
 };
@@ -36,64 +31,6 @@ use tao::{
     event_loop::{ControlFlow, EventLoop, EventLoopBuilder},
 };
 use wry::webview::{webview_version, FileDropEvent};
-
-pub struct UiResources {
-    player: Option<PlayerThreadHandle>,
-    pub waveform: Waveform,
-    pub metadata: Option<Metadata>,
-    pub playback_status: PlaybackStatus,
-}
-
-impl UiResources {
-    pub fn new() -> Self {
-        Self {
-            player: None,
-            waveform: Waveform::empty(),
-            metadata: None,
-            playback_status: PlaybackStatus::default(),
-        }
-    }
-
-    pub fn player(&self) -> &PlayerThreadHandle {
-        self.player.as_ref().expect("player should be set by now")
-    }
-}
-
-impl Default for UiResources {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-pub type SharedUiResources = Rc<RefCell<UiResources>>;
-
-#[derive(Clone, Debug, serde::Deserialize)]
-#[serde(tag = "kind")]
-pub enum UiMessage {
-    Quit,
-    DragWindowStart,
-    MediaControlBack,
-    MediaControlForward,
-    MediaControlPause,
-    MediaControlPlay,
-    MediaControlSeek { position: usize },
-    MediaControlSkipBack,
-    MediaControlSkipForward,
-    MediaControlStop,
-    LoadLocations { locations: Vec<Location> },
-}
-
-impl BroadcastMessage for UiMessage {
-    type Channel = NoChannels;
-
-    fn channel(&self) -> Self::Channel {
-        NoChannels
-    }
-
-    fn frequent(&self) -> bool {
-        false
-    }
-}
 
 pub struct Ui {
     /// MacOS has the special "always at the top" menu bar that needs to get populated.
@@ -110,13 +47,15 @@ pub struct Ui {
     ui_sub: BroadcastSubscription<UiMessage>,
     playlist_manager: PlaylistManager,
 
-    resources: SharedUiResources,
+    state: StateHandle,
+    state_sub: BroadcastSubscription<StateChanged>,
 }
 
 impl Ui {
     pub fn new(mode: Mode) -> Result<Self, FatalError> {
-        let resources = Rc::new(RefCell::new(UiResources::new()));
-        let to_ui = Rc::new(InternalProtocol::new(resources.clone()));
+        let state = State::new_handle();
+        let state_sub = state.subscribe("ui-backend");
+        let to_ui = Rc::new(InternalProtocol::new(state.clone()));
 
         let ui_broadcaster = Broadcaster::new();
         let ui_sub = ui_broadcaster.subscribe("ui-backend", NoChannels);
@@ -151,7 +90,6 @@ impl Ui {
                 unimplemented!("library mode isn't implemented yet")
             }
         }
-        resources.borrow_mut().player = Some(player.weak_clone());
 
         Ok(Self {
             #[cfg(target_os = "macos")]
@@ -166,7 +104,8 @@ impl Ui {
             ui_sub,
             playlist_manager,
 
-            resources,
+            state,
+            state_sub,
         })
     }
 
@@ -194,6 +133,12 @@ impl Ui {
                 *control_flow = new_flow;
             }
             self.playlist_manager.update();
+
+            if let Some(StateChanged) = self.state_sub.try_recv() {
+                self.main_web_view
+                    .evaluate_script(r#"millenium.Message.handle({ kind: "state_updated" })"#)
+                    .expect("valid script");
+            }
 
             match event {
                 Event::LoopDestroyed => {
@@ -227,20 +172,20 @@ impl Ui {
 
     fn handle_player_messages(&self) {
         while let Some(message) = self.player_sub.try_recv() {
-            let mut resources = self.resources.borrow_mut();
             if !message.frequent() {
                 log::info!("ui-backend received broadcast message: {message:?}");
             }
             match message {
                 PlayerMessage::UpdateWaveform(waveform) => {
                     let waveform_lock = waveform.lock().unwrap();
-                    resources.waveform.copy_from(&waveform_lock);
+                    self.state.mutate(|state| {
+                        state.waveform.copy_from(&waveform_lock);
+                    });
                 }
                 PlayerMessage::UpdatePlaybackStatus(status) => {
-                    resources.playback_status = status;
-                    self.main_web_view
-                        .evaluate_script(r#"millenium.Message.handle("state_updated", null)"#)
-                        .expect("valid script");
+                    self.state.mutate(|state| {
+                        state.playback_status = status;
+                    });
                 }
 
                 PlayerMessage::EventAudioDeviceCreationFailed(_err) => {
@@ -257,12 +202,16 @@ impl Ui {
                 }
                 PlayerMessage::EventStartedTrack => {}
                 PlayerMessage::EventFinishedTrack => {
-                    resources.waveform.copy_from(&Waveform::empty());
-                    resources.playback_status = PlaybackStatus::default();
-                    resources.metadata = None;
+                    self.state.mutate(|state| {
+                        state.waveform.copy_from(&Waveform::empty());
+                        state.playback_status = PlaybackStatus::default();
+                        state.metadata = None;
+                    });
                 }
                 PlayerMessage::EventMetadataLoaded(metadata) => {
-                    resources.metadata = Some(metadata);
+                    self.state.mutate(|state| {
+                        state.metadata = Some(metadata);
+                    });
                 }
 
                 _ => {}
@@ -276,6 +225,18 @@ impl Ui {
                 UiMessage::Quit => return Some(ControlFlow::Exit),
                 UiMessage::DragWindowStart => {
                     self.main_web_view.window().drag_window().unwrap();
+                }
+                UiMessage::ShowAlert { level, message } => {
+                    let (level, title) = match level {
+                        AlertLevel::Info => (rfd::MessageLevel::Info, ""),
+                        AlertLevel::Warn => (rfd::MessageLevel::Warning, "Caution"),
+                        AlertLevel::Error => (rfd::MessageLevel::Error, "Error"),
+                    };
+                    rfd::MessageDialog::new()
+                        .set_level(level)
+                        .set_title(title)
+                        .set_description(&message)
+                        .show();
                 }
                 _ => {}
             }

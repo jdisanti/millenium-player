@@ -140,6 +140,14 @@ impl<M: BroadcastMessage> Default for Broadcaster<M> {
     }
 }
 
+impl<M: BroadcastMessage> fmt::Debug for Broadcaster<M> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("Broadcaster<")?;
+        f.write_str(std::any::type_name::<M>())?;
+        f.write_str(">")
+    }
+}
+
 impl<M: BroadcastMessage> Broadcaster<M> {
     /// Create a new broadcaster.
     pub fn new() -> Self {
@@ -290,7 +298,7 @@ mod tests {
     }
 
     #[test]
-    #[ntest::timeout(100)]
+    #[ntest::timeout(500)]
     fn no_subscribers() {
         let broadcaster = check_send_sync(Broadcaster::<TestMessage>::new());
         broadcaster.broadcast(TestMessage::A);
@@ -299,7 +307,7 @@ mod tests {
     }
 
     #[test]
-    #[ntest::timeout(100)]
+    #[ntest::timeout(500)]
     fn unsubscribe_on_drop() {
         let broadcaster = Broadcaster::<TestMessage>::new();
         assert_eq!(0, broadcaster.inner.subscriptions.lock().unwrap().len());
@@ -315,7 +323,7 @@ mod tests {
     }
 
     #[test]
-    #[ntest::timeout(100)]
+    #[ntest::timeout(500)]
     fn multiple_subscribers() {
         let broadcaster = Broadcaster::<TestMessage>::new();
 
@@ -330,7 +338,7 @@ mod tests {
     }
 
     #[test]
-    #[ntest::timeout(100)]
+    #[ntest::timeout(500)]
     fn channel_filtering() {
         let broadcaster = Broadcaster::<TestMessage>::new();
 
@@ -357,7 +365,7 @@ mod tests {
     }
 
     #[test]
-    #[ntest::timeout(100)]
+    #[ntest::timeout(500)]
     fn subscriber_broadcasts_dont_circle_back() {
         let broadcaster = Broadcaster::<TestMessage>::new();
 

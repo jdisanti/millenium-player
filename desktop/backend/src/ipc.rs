@@ -12,19 +12,22 @@
 // You should have received a copy of the GNU General Public License along with Millenium Player.
 // If not, see <https://www.gnu.org/licenses/>.
 
-use crate::ui::{SharedUiResources, UiResources};
 use http::{Request, Response, StatusCode};
-use millenium_core::player::message::PlaybackStatus;
+use millenium_core::{
+    message::PlaybackStatus,
+    playlist::PlaylistMode,
+    state::{State, StateHandle},
+};
 use millenium_desktop_assets::asset;
 use std::{borrow::Cow, mem::size_of};
 
 pub struct InternalProtocol {
-    resources: SharedUiResources,
+    state: StateHandle,
 }
 
 impl InternalProtocol {
-    pub fn new(resources: SharedUiResources) -> Self {
-        Self { resources }
+    pub fn new(state: StateHandle) -> Self {
+        Self { state }
     }
 
     pub fn handle_request(&self, request: &Request<Vec<u8>>) -> http::Response<Cow<'static, [u8]>> {
@@ -71,8 +74,8 @@ impl InternalProtocol {
     }
 
     fn handle_ipc_playing_data(&self, _request: &Request<Vec<u8>>) -> Response<Cow<'static, [u8]>> {
-        let resources = self.resources.borrow();
-        let playing = Playing::from(&*resources);
+        let state = self.state.borrow();
+        let playing = Playing::from(&*state);
         let body = serde_json::to_vec(&playing).expect("serializable");
         Response::builder()
             .status(StatusCode::OK)
@@ -85,8 +88,8 @@ impl InternalProtocol {
         &self,
         _request: &Request<Vec<u8>>,
     ) -> Response<Cow<'static, [u8]>> {
-        let resources = self.resources.borrow();
-        let waves = &resources.waveform;
+        let state = self.state.borrow();
+        let waves = &state.waveform;
         let mut body = Vec::with_capacity(2 * waves.spectrum.len() * size_of::<f32>());
         copy_f32s_into_ne_bytes(&mut body, &waves.spectrum);
         copy_f32s_into_ne_bytes(&mut body, &waves.amplitude);
@@ -110,6 +113,7 @@ pub struct Playing<'a> {
     pub artist: Option<&'a str>,
     pub album: Option<&'a str>,
     pub status: PlaybackStatus,
+    pub playlist_mode: PlaylistMode,
 }
 
 impl Playing<'static> {
@@ -119,22 +123,25 @@ impl Playing<'static> {
             artist: None,
             album: None,
             status: PlaybackStatus::default(),
+            playlist_mode: PlaylistMode::default(),
         }
     }
 }
 
-impl<'a> From<&'a UiResources> for Playing<'a> {
-    fn from(resources: &'a UiResources) -> Self {
-        if let Some(metadata) = &resources.metadata {
+impl<'a> From<&'a State> for Playing<'a> {
+    fn from(state: &'a State) -> Self {
+        if let Some(metadata) = &state.metadata {
             Playing {
                 title: metadata.track_title.as_deref(),
                 artist: metadata.artist.as_deref(),
                 album: metadata.album.as_deref(),
-                status: resources.playback_status,
+                status: state.playback_status,
+                playlist_mode: state.playlist_mode,
             }
         } else {
             Playing {
-                status: resources.playback_status,
+                status: state.playback_status,
+                playlist_mode: state.playlist_mode,
                 ..Self::default()
             }
         }
