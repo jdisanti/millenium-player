@@ -32,3 +32,6 @@ pub mod message;
 
 /// Audio metadata/tags.
 pub mod metadata;
+
+/// Application state.
+pub mod state;

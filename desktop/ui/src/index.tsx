@@ -13,7 +13,7 @@
 // If not, see <https://www.gnu.org/licenses/>.
 
 import { Component, render } from "preact";
-import { IpcFetchInterval, Message } from "./ipc";
+import { IpcFetchInterval, Message, MessageContents } from "./ipc";
 import { Waveform } from "./waveform";
 import { Time } from "./component/time";
 import {
@@ -49,10 +49,13 @@ const SimplePlayer = (props: { playing: Playing }) => {
             <MediaControlButtonPausePlay
                 playing={props.playing.status.playing}
             />
-            <MediaControlButton type="MediaControlStop" disabled={false} />
             <MediaControlButton type="MediaControlForward" disabled={false} />
             <MediaControlButton
                 type="MediaControlSkipForward"
+                disabled={false}
+            />
+            <MediaControlButton
+                type="MediaControlPlaylistModeNormal"
                 disabled={false}
             />
         </>
@@ -88,7 +91,7 @@ class App extends Component<object, AppState> {
             })
             .start();
         this.message_handler_id = Message.push_message_handler(
-            (msg: Message) => {
+            (msg: MessageContents) => {
                 if (msg.kind == "state_updated") {
                     this.fetch_playing_data?.fetch_now();
                 }
@@ -118,7 +121,7 @@ class App extends Component<object, AppState> {
     });
 
     $(".title-bar .close")!.addEventListener("click", () => {
-        Message.send("Quit", null);
+        Message.send({ kind: "Quit" });
     });
     $(".title-bar")!.addEventListener("mousedown", (event) => {
         let target = event.target as HTMLElement | null;
@@ -128,7 +131,7 @@ class App extends Component<object, AppState> {
             }
             target = target.parentElement;
         }
-        Message.send("DragWindowStart", null);
+        Message.send({ kind: "DragWindowStart" });
     });
 
     new Waveform($(".waveform")! as HTMLCanvasElement);

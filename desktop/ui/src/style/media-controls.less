@@ -20,8 +20,12 @@ button.media-control {
     margin: 2px;
     background: none;
     border: 0;
+    position: relative;
 
     i {
+        position: absolute;
+        top: 0;
+        left: 0;
         width: @size;
         height: @size;
         display: block;
@@ -68,4 +72,28 @@ button.media-control {
 .media-control-skip-forward i {
     background-color: #fff;
     .mask(url("material-icons/skip_next.svg") 0 0 / 100% 100%);
+}
+
+.media-control-playlist-mode-normal i {
+    background-color: #fff;
+    top: 2px !important;
+    left: 2px !important;
+    width: 26px !important;
+    height: 26px !important;
+    .mask(url("material-icons/forward_media.svg") 0 0 / 26px 26px);
+}
+
+.media-control-playlist-mode-shuffle i {
+    background-color: #fff;
+    .mask(url("material-icons/shuffle.svg") 0 0 / 100% 100%);
+}
+
+.media-control-playlist-mode-repeat-one i {
+    background-color: #fff;
+    .mask(url("material-icons/repeat_one.svg") 0 0 / 100% 100%);
+}
+
+.media-control-playlist-mode-repeat-all i {
+    background-color: #fff;
+    .mask(url("material-icons/repeat.svg") 0 0 / 100% 100%);
 }

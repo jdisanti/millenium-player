@@ -140,6 +140,14 @@ impl<M: BroadcastMessage> Default for Broadcaster<M> {
     }
 }
 
+impl<M: BroadcastMessage> fmt::Debug for Broadcaster<M> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("Broadcaster<")?;
+        f.write_str(std::any::type_name::<M>())?;
+        f.write_str(">")
+    }
+}
+
 impl<M: BroadcastMessage> Broadcaster<M> {
     /// Create a new broadcaster.
     pub fn new() -> Self {

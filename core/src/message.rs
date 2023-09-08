@@ -12,11 +12,14 @@
 // You should have received a copy of the GNU General Public License along with Millenium Player.
 // If not, see <https://www.gnu.org/licenses/>.
 
-use crate::broadcast::{BroadcastMessage, Channel};
 use crate::player::waveform::Waveform;
 use crate::{
     audio::{device::AudioDeviceError, source::AudioSourceError},
     broadcast::NoChannels,
+};
+use crate::{
+    broadcast::{BroadcastMessage, Channel},
+    playlist::PlaylistMode,
 };
 use crate::{location::Location, metadata::Metadata};
 use std::{
@@ -158,6 +161,9 @@ pub enum UiMessage {
     MediaControlSkipBack,
     MediaControlSkipForward,
     MediaControlStop,
+    MediaControlPlaylistMode {
+        mode: PlaylistMode,
+    },
     LoadLocations {
         locations: Vec<Location>,
     },

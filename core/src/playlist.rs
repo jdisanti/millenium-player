@@ -71,8 +71,9 @@ pub struct PlaylistEntry {
     duration: Option<Duration>,
 }
 
-#[derive(Copy, Clone, Debug, Eq, PartialEq, serde::Serialize)]
-pub enum PlaybackMode {
+#[derive(Copy, Clone, Debug, Default, Eq, PartialEq, serde::Serialize, serde::Deserialize)]
+pub enum PlaylistMode {
+    #[default]
     Normal,
     RepeatOne,
     RepeatAll,
@@ -108,7 +109,7 @@ pub struct PlaylistManager {
     playlist: Playlist,
     player_sub: BroadcastSubscription<PlayerMessage>,
     ui_sub: BroadcastSubscription<UiMessage>,
-    playback_mode: PlaybackMode,
+    playlist_mode: PlaylistMode,
     playback_status: Option<PlaybackStatus>,
 }
 
@@ -127,7 +128,7 @@ impl PlaylistManager {
             playlist: Playlist::default(),
             player_sub,
             ui_sub,
-            playback_mode: PlaybackMode::Normal,
+            playlist_mode: PlaylistMode::Normal,
             playback_status: None,
         }
     }
@@ -157,6 +158,10 @@ impl PlaylistManager {
                 UiMessage::MediaControlStop => log::error!("stop not implemented"),
                 UiMessage::MediaControlForward => log::error!("forward not implemented"),
                 UiMessage::MediaControlSkipForward => self.start_next_track(true),
+                UiMessage::MediaControlPlaylistMode { mode } => {
+                    self.playlist_mode = mode;
+                    // TODO: Communicate back to the UI that the playlist has changed
+                }
                 _ => {}
             }
         }
@@ -193,21 +198,21 @@ impl PlaylistManager {
         }
 
         let (_current_id, current_index) = self.playlist.current().unwrap();
-        match self.playback_mode {
-            PlaybackMode::Normal => {
+        match self.playlist_mode {
+            PlaylistMode::Normal => {
                 if *current_index == 0 {
                     self.stop();
                 } else {
                     self.start_track(PlaylistIndex(*current_index - 1));
                 }
             }
-            PlaybackMode::Shuffle => {
+            PlaylistMode::Shuffle => {
                 unimplemented!()
             }
-            PlaybackMode::RepeatOne => {
+            PlaylistMode::RepeatOne => {
                 self.restart_current_track();
             }
-            PlaybackMode::RepeatAll => {
+            PlaylistMode::RepeatAll => {
                 unimplemented!()
             }
         }
@@ -232,8 +237,8 @@ impl PlaylistManager {
         }
 
         let (_current_id, current_index) = self.playlist.current().unwrap();
-        match self.playback_mode {
-            PlaybackMode::Normal => {
+        match self.playlist_mode {
+            PlaylistMode::Normal => {
                 let next_index = PlaylistIndex(*current_index + 1);
                 if next_index.0 >= self.playlist.entries.len() {
                     if stop_immediately {
@@ -245,13 +250,13 @@ impl PlaylistManager {
                     self.start_track(next_index);
                 }
             }
-            PlaybackMode::Shuffle => {
+            PlaylistMode::Shuffle => {
                 unimplemented!()
             }
-            PlaybackMode::RepeatOne => {
+            PlaylistMode::RepeatOne => {
                 self.restart_current_track();
             }
-            PlaybackMode::RepeatAll => {
+            PlaylistMode::RepeatAll => {
                 unimplemented!()
             }
         }

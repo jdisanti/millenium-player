@@ -12,14 +12,18 @@
 // You should have received a copy of the GNU General Public License along with Millenium Player.
 // If not, see <https://www.gnu.org/licenses/>.
 
-import { Message } from "../ipc";
+import { Message, MessageContents } from "../ipc";
 
 export const MediaControlButton = (props: {
     type: string;
     disabled: boolean;
 }) => {
     const varieties: {
-        [key: string]: { ariaLabel: string; className: string };
+        [key: string]: {
+            ariaLabel: string;
+            className: string;
+            onClick?: MessageContents;
+        };
     } = {
         MediaControlSkipBack: {
             ariaLabel: "Skip back",
@@ -49,12 +53,39 @@ export const MediaControlButton = (props: {
             ariaLabel: "Skip forward",
             className: "media-control-skip-forward",
         },
+        MediaControlPlaylistModeNormal: {
+            ariaLabel:
+                "Current playlist mode: normal. Click to change playlist mode",
+            className: "media-control-playlist-mode-normal",
+            onClick: { kind: "MediaControlPlaylistMode", mode: "Shuffle" },
+        },
+        MediaControlPlaylistModeShuffle: {
+            ariaLabel:
+                "Current playlist mode: shuffle. Click to change playlist mode",
+            className: "media-control-playlist-mode-shuffle",
+            onClick: { kind: "MediaControlPlaylistMode", mode: "RepeatOne" },
+        },
+        MediaControlPlaylistModeRepeatOne: {
+            ariaLabel:
+                "Current playlist mode: repeat one. Click to change playlist mode",
+            className: "media-control-playlist-mode-repeat-one",
+            onClick: { kind: "MediaControlPlaylistMode", mode: "RepeatAll" },
+        },
+        MediaControlPlaylistModeRepeatAll: {
+            ariaLabel:
+                "Current playlist mode: repeat all. Click to change playlist mode",
+            className: "media-control-playlist-mode-repeat-all",
+            onClick: { kind: "MediaControlPlaylistMode", mode: "RepeatNormal" },
+        },
     };
     const button = varieties[props.type];
     if (!button) {
         throw new Error(`Unknown media control type: ${props.type}`);
     }
-    const onClick = Message.send.bind(null, props.type, null);
+    const onClick = Message.send.bind(
+        null,
+        button.onClick || { kind: props.type },
+    );
     return (
         <button
             aria-label={button.ariaLabel}
@@ -70,4 +101,14 @@ export const MediaControlButton = (props: {
 export const MediaControlButtonPausePlay = (props: { playing: boolean }) => {
     const type = props.playing ? "MediaControlPause" : "MediaControlPlay";
     return <MediaControlButton type={type} disabled={false} />;
+};
+
+export type PlaylistMode = "Normal" | "Shuffle" | "RepeatOne" | "RepeatAll";
+export const MediaControlPlaylistMode = (props: { mode: PlaylistMode }) => {
+    return (
+        <MediaControlButton
+            type={`MedialControlPlaylistMode${props.mode}`}
+            disabled={false}
+        />
+    );
 };
