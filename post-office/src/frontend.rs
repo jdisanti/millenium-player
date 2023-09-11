@@ -12,20 +12,5 @@
 // You should have received a copy of the GNU General Public License along with Millenium Player.
 // If not, see <https://www.gnu.org/licenses/>.
 
-/// Audio support logic.
-pub mod audio;
-
-/// Location struct that represents file system or network locations.
-pub mod location;
-
-/// Audio player thread.
-pub mod player;
-
-/// Playlist management.
-pub mod playlist;
-
-/// Message types.
 pub mod message;
-
-/// Audio metadata/tags.
-pub mod metadata;
+pub mod state;

@@ -12,14 +12,17 @@
 // You should have received a copy of the GNU General Public License along with Millenium Player.
 // If not, see <https://www.gnu.org/licenses/>.
 
-use crate::message::{AlertLevel, UiMessage};
 use crate::{
-    broadcast::{BroadcastSubscription, Broadcaster, NoChannels},
     location::Location,
-    message::{PlaybackStatus, PlayerMessage, PlayerMessageChannel},
+    message::{PlayerMessage, PlayerMessageChannel},
     metadata::Metadata,
 };
-use std::{ops::Deref, time::Duration};
+use millenium_post_office::{
+    broadcast::{BroadcastSubscription, Broadcaster, NoChannels},
+    frontend::message::{AlertLevel, FrontendMessage, PlaylistMode},
+    frontend::state::PlaybackStatus,
+};
+use std::{ops::Deref, str::FromStr, time::Duration};
 
 #[derive(Copy, Clone, Debug, Eq, PartialEq, serde::Serialize)]
 pub struct PlaylistEntryId(usize);
@@ -71,15 +74,6 @@ pub struct PlaylistEntry {
     duration: Option<Duration>,
 }
 
-#[derive(Copy, Clone, Debug, Default, Eq, PartialEq, serde::Serialize, serde::Deserialize)]
-pub enum PlaylistMode {
-    #[default]
-    Normal,
-    RepeatOne,
-    RepeatAll,
-    Shuffle,
-}
-
 #[derive(Default)]
 pub struct Playlist {
     entries: Vec<PlaylistEntry>,
@@ -108,7 +102,7 @@ pub struct PlaylistManager {
     next_id: usize,
     playlist: Playlist,
     player_sub: BroadcastSubscription<PlayerMessage>,
-    ui_sub: BroadcastSubscription<UiMessage>,
+    ui_sub: BroadcastSubscription<FrontendMessage>,
     playlist_mode: PlaylistMode,
     playback_status: Option<PlaybackStatus>,
 }
@@ -116,7 +110,7 @@ pub struct PlaylistManager {
 impl PlaylistManager {
     pub fn new(
         player_broadcaster: Broadcaster<PlayerMessage>,
-        ui_broadcaster: Broadcaster<UiMessage>,
+        ui_broadcaster: Broadcaster<FrontendMessage>,
     ) -> Self {
         let player_sub = player_broadcaster.subscribe(
             "playlist-manager",
@@ -146,19 +140,26 @@ impl PlaylistManager {
         }
         while let Some(message) = self.ui_sub.try_recv() {
             match message {
-                UiMessage::LoadLocations { locations } => self.load_locations(locations),
-                UiMessage::MediaControlSkipBack => self.control_skip_back(),
-                UiMessage::MediaControlBack => log::error!("back not implemented"),
-                UiMessage::MediaControlPause => {
+                FrontendMessage::LoadLocations { locations } => self.load_locations(
+                    locations
+                        .into_iter()
+                        .map(|l| {
+                            Location::from_str(&l).expect("frontend is only given valid locations")
+                        })
+                        .collect(),
+                ),
+                FrontendMessage::MediaControlSkipBack => self.control_skip_back(),
+                FrontendMessage::MediaControlBack => log::error!("back not implemented"),
+                FrontendMessage::MediaControlPause => {
                     self.player_sub.broadcast(PlayerMessage::CommandPause)
                 }
-                UiMessage::MediaControlPlay => {
+                FrontendMessage::MediaControlPlay => {
                     self.player_sub.broadcast(PlayerMessage::CommandResume)
                 }
-                UiMessage::MediaControlStop => log::error!("stop not implemented"),
-                UiMessage::MediaControlForward => log::error!("forward not implemented"),
-                UiMessage::MediaControlSkipForward => self.start_next_track(true),
-                UiMessage::MediaControlPlaylistMode { mode } => {
+                FrontendMessage::MediaControlStop => log::error!("stop not implemented"),
+                FrontendMessage::MediaControlForward => log::error!("forward not implemented"),
+                FrontendMessage::MediaControlSkipForward => self.start_next_track(true),
+                FrontendMessage::MediaControlPlaylistMode { mode } => {
                     self.playlist_mode = mode;
                     // TODO: Communicate back to the UI that the playlist has changed
                 }
@@ -169,7 +170,7 @@ impl PlaylistManager {
 
     fn part_way_into_track(&self) -> bool {
         self.playback_status
-            .map(|status| status.position_secs >= 7.0)
+            .map(|status| status.position_secs >= Duration::from_secs(7))
             .unwrap_or(false)
     }
 
@@ -271,7 +272,7 @@ impl PlaylistManager {
             .filter(|location| !location.inferred_type().is_playlist())
             .collect();
         if filtered_locations.is_empty() && !locations.is_empty() {
-            self.ui_sub.broadcast(UiMessage::ShowAlert {
+            self.ui_sub.broadcast(FrontendMessage::ShowAlert {
                 level: AlertLevel::Info,
                 message: "None of the given files are audio or playlist files.".into(),
             });
@@ -322,10 +323,10 @@ mod playlist_manager_tests {
 
         let mut manager = PlaylistManager::new(player.clone(), ui.clone());
 
-        ui_sub.broadcast(UiMessage::LoadLocations {
+        ui_sub.broadcast(FrontendMessage::LoadLocations {
             locations: vec![
-                Location::path("not_an_audio_file1"),
-                Location::path("not_an_audio_file2"),
+                "not_an_audio_file1".to_string(),
+                "not_an_audio_file2".to_string(),
             ],
         });
         manager.update();
@@ -334,7 +335,7 @@ mod playlist_manager_tests {
         assert_eq!(None, manager.playlist.current_index);
         assert_eq!(None, player_sub.try_recv());
         assert_eq!(
-            Some(UiMessage::ShowAlert {
+            Some(FrontendMessage::ShowAlert {
                 level: AlertLevel::Info,
                 message: "None of the given files are audio or playlist files.".into(),
             }),
@@ -350,8 +351,8 @@ mod playlist_manager_tests {
 
         let mut manager = PlaylistManager::new(player.clone(), ui.clone());
 
-        ui_sub.broadcast(UiMessage::LoadLocations {
-            locations: vec![Location::path("one.ogg"), Location::path("two.ogg")],
+        ui_sub.broadcast(FrontendMessage::LoadLocations {
+            locations: vec!["one.ogg".to_string(), "two.ogg".to_string()],
         });
         manager.update();
         pretty_assertions::assert_eq!(
@@ -404,8 +405,8 @@ mod playlist_manager_tests {
 
         let mut manager = PlaylistManager::new(player.clone(), ui.clone());
 
-        ui_sub.broadcast(UiMessage::LoadLocations {
-            locations: vec![Location::path("one.ogg"), Location::path("two.ogg")],
+        ui_sub.broadcast(FrontendMessage::LoadLocations {
+            locations: vec!["one.ogg".to_string(), "two.ogg".to_string()],
         });
         manager.update();
         assert_eq!(2, manager.playlist.entries.len());
@@ -416,7 +417,7 @@ mod playlist_manager_tests {
             player_sub.try_recv().unwrap(),
         );
 
-        ui_sub.broadcast(UiMessage::MediaControlSkipForward);
+        ui_sub.broadcast(FrontendMessage::MediaControlSkipForward);
         manager.update();
         assert_eq!(2, manager.playlist.entries.len());
         assert_eq!(Some(PlaylistEntryId(2)), manager.playlist.current_id);
@@ -426,7 +427,7 @@ mod playlist_manager_tests {
             player_sub.try_recv().unwrap(),
         );
 
-        ui_sub.broadcast(UiMessage::MediaControlSkipForward);
+        ui_sub.broadcast(FrontendMessage::MediaControlSkipForward);
         manager.update();
         assert_eq!(2, manager.playlist.entries.len());
         assert_eq!(None, manager.playlist.current_id);
@@ -445,8 +446,8 @@ mod playlist_manager_tests {
 
         let mut manager = PlaylistManager::new(player.clone(), ui.clone());
 
-        ui_sub.broadcast(UiMessage::LoadLocations {
-            locations: vec![Location::path("one.ogg"), Location::path("two.ogg")],
+        ui_sub.broadcast(FrontendMessage::LoadLocations {
+            locations: vec!["one.ogg".to_string(), "two.ogg".to_string()],
         });
         manager.update();
         assert_eq!(2, manager.playlist.entries.len());
@@ -459,13 +460,13 @@ mod playlist_manager_tests {
 
         player_sub.broadcast(PlayerMessage::UpdatePlaybackStatus(PlaybackStatus {
             playing: true,
-            position_secs: 7.0,
-            duration_secs: Some(60.0),
+            position_secs: Duration::from_secs(7),
+            duration_secs: Some(Duration::from_secs(60)),
         }));
         manager.update();
 
         // Since we're 7 seconds into the song, skipping back should restart the song
-        ui_sub.broadcast(UiMessage::MediaControlSkipBack);
+        ui_sub.broadcast(FrontendMessage::MediaControlSkipBack);
         manager.update();
         assert_eq!(2, manager.playlist.entries.len());
         assert_eq!(Some(PlaylistEntryId(1)), manager.playlist.current_id);
@@ -478,11 +479,11 @@ mod playlist_manager_tests {
         // Now skipping back should go off the end of the playlist
         player_sub.broadcast(PlayerMessage::UpdatePlaybackStatus(PlaybackStatus {
             playing: true,
-            position_secs: 1.0,
-            duration_secs: Some(60.0),
+            position_secs: Duration::from_secs(1),
+            duration_secs: Some(Duration::from_secs(60)),
         }));
         manager.update();
-        ui_sub.broadcast(UiMessage::MediaControlSkipBack);
+        ui_sub.broadcast(FrontendMessage::MediaControlSkipBack);
         manager.update();
         assert_eq!(2, manager.playlist.entries.len());
         assert_eq!(None, manager.playlist.current_id);

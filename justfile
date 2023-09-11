@@ -1,20 +1,18 @@
 # This justfile can be used with just: https://crates.io/crates/just
 
 setup:
-    cd desktop/ui; npm install
+    cargo install --locked trunk
 
-ui-fix:
-    cd desktop/ui; npm run prettier:fix && npm run lint:fix
-ui-test:
-    cd desktop/ui; npm run prettier && npm run lint
-ui-build:
-    cd desktop/ui; npm run build
-ui-watch:
-    cd desktop/ui; npm run watch
+frontend-build:
+    cd desktop/frontend; trunk build
+frontend-release:
+    cd desktop/frontend; trunk build --release
+frontend-watch:
+    cd desktop/frontend; trunk watch
 
-build: ui-build rust-build
+build: frontend-build rust-build
 
-release: ui-build
+release: frontend-release
     cargo build --release --all-features --bin millenium-player
 
 rust-build:
@@ -26,14 +24,13 @@ rust-test:
 rust-clippy:
     cargo clippy --all-features
 
-test: ui-test ui-build rust-check-fmt rust-test rust-clippy
+test: rust-check-fmt rust-clippy frontend-build rust-test
 
-run:
+run: frontend-build
     cargo run --bin millenium-player -- simple
-run-hydrate:
+run-hydrate: frontend-build
     cargo run --bin millenium-player -- simple ./test-data/hydrate/hydrate.mp3
 
 clean:
-    rm -rf ./desktop/ui/build/
-    rm -rf ./desktop/ui/node_modules/
-    rm -rf ./target/
+    cd desktop/frontend; trunk clean
+    cargo clean

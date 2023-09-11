@@ -13,23 +13,24 @@
 // If not, see <https://www.gnu.org/licenses/>.
 
 use http::{Request, Response, StatusCode};
-use millenium_core::{
-    message::PlaybackStatus,
-    playlist::PlaylistMode,
-    state::{State, StateHandle},
-};
 use millenium_desktop_assets::asset;
+use millenium_post_office::frontend::state::{PlaybackState, WaveformState};
 use std::{borrow::Cow, mem::size_of};
 
 pub struct InternalProtocol {
-    state: StateHandle,
+    playback_state: PlaybackState,
+    waveform_state: WaveformState,
 }
 
 impl InternalProtocol {
-    pub fn new(state: StateHandle) -> Self {
-        Self { state }
+    pub fn new(playback_state: PlaybackState, waveform_state: WaveformState) -> Self {
+        Self {
+            playback_state,
+            waveform_state,
+        }
     }
 
+    // TODO: unit test
     pub fn handle_request(&self, request: &Request<Vec<u8>>) -> http::Response<Cow<'static, [u8]>> {
         let path = request.uri().path();
         if path.starts_with("/ipc/") {
@@ -60,8 +61,8 @@ impl InternalProtocol {
         request: &Request<Vec<u8>>,
     ) -> Response<Cow<'static, [u8]>> {
         match path {
-            "/ipc/playing-data" => self.handle_ipc_playing_data(request),
-            "/ipc/waveform-data" => self.handle_ipc_waveform_data(request),
+            "/ipc/playback" => self.handle_ipc_playback(request),
+            "/ipc/waveform" => self.handle_ipc_waveform(request),
             _ => Self::error_not_found(),
         }
     }
@@ -73,10 +74,9 @@ impl InternalProtocol {
             .expect("valid response")
     }
 
-    fn handle_ipc_playing_data(&self, _request: &Request<Vec<u8>>) -> Response<Cow<'static, [u8]>> {
-        let state = self.state.borrow();
-        let playing = Playing::from(&*state);
-        let body = serde_json::to_vec(&playing).expect("serializable");
+    fn handle_ipc_playback(&self, _request: &Request<Vec<u8>>) -> Response<Cow<'static, [u8]>> {
+        let state = self.playback_state.borrow();
+        let body = serde_json::to_vec(&*state).expect("serializable");
         Response::builder()
             .status(StatusCode::OK)
             .header("Content-Type", "application/json")
@@ -84,66 +84,25 @@ impl InternalProtocol {
             .expect("valid response")
     }
 
-    fn handle_ipc_waveform_data(
-        &self,
-        _request: &Request<Vec<u8>>,
-    ) -> Response<Cow<'static, [u8]>> {
-        let state = self.state.borrow();
-        let waves = &state.waveform;
-        let mut body = Vec::with_capacity(2 * waves.spectrum.len() * size_of::<f32>());
-        copy_f32s_into_ne_bytes(&mut body, &waves.spectrum);
-        copy_f32s_into_ne_bytes(&mut body, &waves.amplitude);
-        Response::builder()
-            .status(StatusCode::OK)
-            .header("Content-Type", "application/octet-stream")
-            .body(body.into())
-            .expect("valid response")
+    fn handle_ipc_waveform(&self, _request: &Request<Vec<u8>>) -> Response<Cow<'static, [u8]>> {
+        let state = self.waveform_state.borrow();
+        if let Some(waves) = &state.waveform {
+            let mut body = Vec::with_capacity(2 * waves.spectrum.len() * size_of::<f32>());
+            copy_f32s_into_ne_bytes(&mut body, &waves.spectrum);
+            copy_f32s_into_ne_bytes(&mut body, &waves.amplitude);
+            Response::builder()
+                .status(StatusCode::OK)
+                .header("Content-Type", "application/octet-stream")
+                .body(body.into())
+                .expect("valid response")
+        } else {
+            Self::error_not_found()
+        }
     }
 }
 
 fn copy_f32s_into_ne_bytes(into: &mut Vec<u8>, data: &[f32]) {
     for &value in data {
         into.extend_from_slice(&value.to_ne_bytes()[..]);
-    }
-}
-
-#[derive(Default, Debug, serde::Serialize)]
-pub struct Playing<'a> {
-    pub title: Option<&'a str>,
-    pub artist: Option<&'a str>,
-    pub album: Option<&'a str>,
-    pub status: PlaybackStatus,
-    pub playlist_mode: PlaylistMode,
-}
-
-impl Playing<'static> {
-    pub fn empty() -> Self {
-        Self {
-            title: None,
-            artist: None,
-            album: None,
-            status: PlaybackStatus::default(),
-            playlist_mode: PlaylistMode::default(),
-        }
-    }
-}
-
-impl<'a> From<&'a State> for Playing<'a> {
-    fn from(state: &'a State) -> Self {
-        if let Some(metadata) = &state.metadata {
-            Playing {
-                title: metadata.track_title.as_deref(),
-                artist: metadata.artist.as_deref(),
-                album: metadata.album.as_deref(),
-                status: state.playback_status,
-                playlist_mode: state.playlist_mode,
-            }
-        } else {
-            Playing {
-                status: state.playback_status,
-                playlist_mode: state.playlist_mode,
-                ..Self::default()
-            }
-        }
     }
 }

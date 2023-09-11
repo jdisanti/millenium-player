@@ -27,7 +27,7 @@ macro_rules! asset {
             #[cfg(debug_assertions)]
             { crate::asset::Asset::from_path_debug($mime, $path) }
             #[cfg(not(debug_assertions))]
-            { crate::asset::Asset::from_path_release($mime, include_bytes!(concat!("../../ui/build/", $path))) }
+            { crate::asset::Asset::from_path_release($mime, include_bytes!(concat!("../../frontend/build/", $path))) }
         }
     };
     (pub(crate) $name:ident => $path:literal / $mime:literal / $doc:literal) => {
@@ -50,27 +50,28 @@ macro_rules! asset {
 }
 
 asset! {
-    CSS_STYLE => "style.css" / "text/css" / "The CSS file for the UI.",
-    FONT_CANTARELL => "cantarell/Cantarell-VF.otf" / "font/otf" / "The main font for the UI.",
+    CSS_INDEX => "index.css" / "text/css" / "The CSS file for the UI.",
+    FONT_CANTARELL => "static/cantarell/Cantarell-VF.otf" / "font/otf" / "The main font for the UI.",
     HTML_INDEX => "index.html" / "text/html" / "The root HTML file for the UI.",
-    ICON_ALBUM => "material-icons/album.svg" / "image/svg+xml" / "Media control icon.",
-    ICON_CIRCLE => "material-symbols/circle.svg" / "image/svg+xml" / "Circle icon used for the traffic light in MacOS.",
-    ICON_CLOSE => "material-symbols/close.svg" / "image/svg+xml" / "Close icon used for the close buttons on Windows and MacOS.",
-    ICON_FAST_FORWARD => "material-icons/fast_forward.svg" / "image/svg+xml" / "Media control icon.",
-    ICON_FAST_REWIND => "material-icons/fast_rewind.svg" / "image/svg+xml" / "Media control icon.",
-    ICON_FORWARD_MEDIA => "material-icons/forward_media.svg" / "image/svg+xml" / "Media control icon.",
-    ICON_LOOP => "material-icons/loop.svg" / "image/svg+xml" / "Media control icon.",
-    ICON_MENU => "material-icons/menu.svg" / "image/svg+xml" / "Icon for a menu.",
-    ICON_PAUSE => "material-icons/pause.svg" / "image/svg+xml" / "Media control icon.",
-    ICON_PLAY => "material-icons/play.svg" / "image/svg+xml" / "Media control icon.",
-    ICON_RADIO => "material-icons/radio.svg" / "image/svg+xml" / "Media control icon.",
-    ICON_REPEAT => "material-icons/repeat.svg" / "image/svg+xml" / "Media control icon.",
-    ICON_REPEAT_ONE => "material-icons/repeat_one.svg" / "image/svg+xml" / "Media control icon.",
-    ICON_SHUFFLE => "material-icons/shuffle.svg" / "image/svg+xml" / "Media control icon.",
-    ICON_SKIP_NEXT => "material-icons/skip_next.svg" / "image/svg+xml" / "Media control icon.",
-    ICON_SKIP_PREVIOUS => "material-icons/skip_previous.svg" / "image/svg+xml" / "Media control icon.",
-    ICON_STOP => "material-icons/stop.svg" / "image/svg+xml" / "Media control icon.",
-    JS_INDEX => "index.js" / "text/javascript" / "The JavaScript entry point.",
+    ICON_ALBUM => "static/material-icons/album.svg" / "image/svg+xml" / "Media control icon.",
+    ICON_CIRCLE => "static/material-symbols/circle.svg" / "image/svg+xml" / "Circle icon used for the traffic light in MacOS.",
+    ICON_CLOSE => "static/material-symbols/close.svg" / "image/svg+xml" / "Close icon used for the close buttons on Windows and MacOS.",
+    ICON_FAST_FORWARD => "static/material-icons/fast_forward.svg" / "image/svg+xml" / "Media control icon.",
+    ICON_FAST_REWIND => "static/material-icons/fast_rewind.svg" / "image/svg+xml" / "Media control icon.",
+    ICON_FORWARD_MEDIA => "static/material-icons/forward_media.svg" / "image/svg+xml" / "Media control icon.",
+    ICON_LOOP => "static/material-icons/loop.svg" / "image/svg+xml" / "Media control icon.",
+    ICON_MENU => "static/material-icons/menu.svg" / "image/svg+xml" / "Icon for a menu.",
+    ICON_PAUSE => "static/material-icons/pause.svg" / "image/svg+xml" / "Media control icon.",
+    ICON_PLAY => "static/material-icons/play.svg" / "image/svg+xml" / "Media control icon.",
+    ICON_RADIO => "static/material-icons/radio.svg" / "image/svg+xml" / "Media control icon.",
+    ICON_REPEAT => "static/material-icons/repeat.svg" / "image/svg+xml" / "Media control icon.",
+    ICON_REPEAT_ONE => "static/material-icons/repeat_one.svg" / "image/svg+xml" / "Media control icon.",
+    ICON_SHUFFLE => "static/material-icons/shuffle.svg" / "image/svg+xml" / "Media control icon.",
+    ICON_SKIP_NEXT => "static/material-icons/skip_next.svg" / "image/svg+xml" / "Media control icon.",
+    ICON_SKIP_PREVIOUS => "static/material-icons/skip_previous.svg" / "image/svg+xml" / "Media control icon.",
+    ICON_STOP => "static/material-icons/stop.svg" / "image/svg+xml" / "Media control icon.",
+    JS_INDEX => "millenium-desktop-frontend.js" / "text/javascript" / "The JavaScript entry point.",
+    WASM_INDEX => "millenium-desktop-frontend_bg.wasm" / "application/wasm" / "The JavaScript entry point.",
 }
 
 pub struct LoadedAsset {
@@ -99,5 +100,5 @@ pub fn asset(name: &str) -> Result<LoadedAsset, AssetError> {
 #[cfg(test)]
 pub(crate) mod test {
     use super::*;
-    asset!(pub(crate) TEST_ASSET => "test_asset.txt" / "text/plain" / "Asset for unit testing.");
+    asset!(pub(crate) TEST_ASSET => "static/test_asset.txt" / "text/plain" / "Asset for unit testing.");
 }

@@ -15,9 +15,10 @@
 use crate::{
     audio::source::{AudioDecoderSource, PreferredFormat},
     location::Location,
-    message::{PlaybackStatus, PlayerMessage},
+    message::PlayerMessage,
     player::{thread::PlayerThreadResources, waveform::WaveformCalculator},
 };
+use millenium_post_office::frontend::state::PlaybackStatus;
 use std::{
     mem,
     time::{Duration, Instant},
@@ -51,7 +52,9 @@ impl CurrentState {
             PlayerMessage::CommandResume => {
                 if matches!(self, CurrentState::Paused(_)) {
                     log::info!("resuming playback");
-                    let CurrentState::Paused(state) = self else { unreachable!() };
+                    let CurrentState::Paused(state) = self else {
+                        unreachable!()
+                    };
                     resources.device.play().unwrap();
                     CurrentState::Playing(state)
                 } else {
@@ -144,7 +147,7 @@ impl StatePlaying {
             source,
             status: PlaybackStatus {
                 playing: true,
-                position_secs: 0.0,
+                position_secs: Duration::from_secs(0),
                 duration_secs: None,
             },
             last_refresh_sent: Instant::now() - Duration::from_secs(2),
@@ -187,11 +190,12 @@ impl State for StatePlaying {
                     resources.device.frames_consumed() as f64,
                     resources.device.playback_sample_rate() as f64,
                 );
-                self.status.position_secs = frames_consumed / sample_rate;
+                self.status.position_secs = Duration::from_secs_f64(frames_consumed / sample_rate);
 
                 let frame_count = self.source.frame_count();
                 if self.status.duration_secs.is_none() && frame_count.is_some() {
-                    self.status.duration_secs = frame_count.map(|fc| fc as f64 / sample_rate);
+                    self.status.duration_secs =
+                        frame_count.map(|fc| Duration::from_secs_f64(fc as f64 / sample_rate));
                 }
 
                 resources

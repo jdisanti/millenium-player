@@ -16,10 +16,10 @@ fn main() {
     println!("cargo:rerun-if-changed=build.rs");
     #[cfg(target_os = "windows")]
     {
-        println!("cargo:rerun-if-changed=../ui/static/app-icon/app-icon.ico");
+        println!("cargo:rerun-if-changed=../frontend/static/app-icon/app-icon.ico");
 
         let mut resource = winres::WindowsResource::new();
-        resource.set_icon("../ui/static/app-icon/app-icon.ico");
+        resource.set_icon("../frontend/static/app-icon/app-icon.ico");
         resource.compile().unwrap();
     }
 }

@@ -15,12 +15,18 @@
 use crate::{args::Mode, error::FatalError, ipc::InternalProtocol, APP_TITLE};
 use camino::Utf8Path;
 use millenium_core::{
-    broadcast::{BroadcastMessage, BroadcastSubscription, Broadcaster, NoChannels},
     location::Location,
-    message::{AlertLevel, PlaybackStatus, PlayerMessage, PlayerMessageChannel, UiMessage},
-    player::{waveform::Waveform, PlayerThread, PlayerThreadHandle},
+    message::{PlayerMessage, PlayerMessageChannel},
+    player::{PlayerThread, PlayerThreadHandle},
     playlist::PlaylistManager,
-    state::{State, StateChanged, StateHandle},
+};
+use millenium_post_office::{
+    broadcast::{BroadcastMessage, BroadcastSubscription, Broadcaster, NoChannels},
+    frontend::{
+        message::{AlertLevel, FrontendMessage, LogLevel},
+        state::{PlaybackState, PlaybackStatus, Track, Waveform, WaveformState},
+    },
+    state::StateChanged,
 };
 use std::{
     rc::Rc,
@@ -43,22 +49,29 @@ pub struct Ui {
 
     player: Option<PlayerThreadHandle>,
     player_sub: BroadcastSubscription<PlayerMessage>,
-    _ui_broadcaster: Broadcaster<UiMessage>,
-    ui_sub: BroadcastSubscription<UiMessage>,
+    _frontend_broadcaster: Broadcaster<FrontendMessage>,
+    frontend_sub: BroadcastSubscription<FrontendMessage>,
     playlist_manager: PlaylistManager,
 
-    state: StateHandle,
-    state_sub: BroadcastSubscription<StateChanged>,
+    playback_state: PlaybackState,
+    playback_state_sub: BroadcastSubscription<StateChanged>,
+    waveform_state: WaveformState,
+    waveform_state_sub: BroadcastSubscription<StateChanged>,
 }
 
 impl Ui {
     pub fn new(mode: Mode) -> Result<Self, FatalError> {
-        let state = State::new_handle();
-        let state_sub = state.subscribe("ui-backend");
-        let to_ui = Rc::new(InternalProtocol::new(state.clone()));
+        let playback_state = PlaybackState::new();
+        let playback_state_sub = playback_state.subscribe("backend");
+        let waveform_state = WaveformState::new();
+        let waveform_state_sub = waveform_state.subscribe("backend");
+        let protocol = Rc::new(InternalProtocol::new(
+            playback_state.clone(),
+            waveform_state.clone(),
+        ));
 
-        let ui_broadcaster = Broadcaster::new();
-        let ui_sub = ui_broadcaster.subscribe("ui-backend", NoChannels);
+        let frontend_broadcaster = Broadcaster::new();
+        let frontend_sub = frontend_broadcaster.subscribe("backend", NoChannels);
 
         let event_loop: EventLoop<()> = EventLoopBuilder::new().build();
         let main_window = tao::window::WindowBuilder::new()
@@ -70,7 +83,7 @@ impl Ui {
             .with_visible(false) // start invisible
             .build(&event_loop)
             .map_err(|err| FatalError::new("failed to create window", err))?;
-        let main_web_view = create_webview(main_window, ui_broadcaster.clone(), to_ui)?;
+        let main_web_view = create_webview(main_window, frontend_broadcaster.clone(), protocol)?;
 
         let player = PlayerThread::spawn(None)?;
         let player_sub = player.broadcaster().subscribe(
@@ -79,9 +92,11 @@ impl Ui {
         );
 
         let playlist_manager =
-            PlaylistManager::new(player.broadcaster().clone(), ui_broadcaster.clone());
+            PlaylistManager::new(player.broadcaster().clone(), frontend_broadcaster.clone());
         match mode {
-            Mode::Simple { locations } => ui_sub.broadcast(UiMessage::LoadLocations { locations }),
+            Mode::Simple { locations } => frontend_sub.broadcast(FrontendMessage::LoadLocations {
+                locations: locations.iter().map(Location::to_string).collect(),
+            }),
             Mode::Library {
                 storage_path,
                 audio_path,
@@ -100,12 +115,14 @@ impl Ui {
 
             player: Some(player),
             player_sub,
-            _ui_broadcaster: ui_broadcaster,
-            ui_sub,
+            _frontend_broadcaster: frontend_broadcaster,
+            frontend_sub,
             playlist_manager,
 
-            state,
-            state_sub,
+            playback_state,
+            playback_state_sub,
+            waveform_state,
+            waveform_state_sub,
         })
     }
 
@@ -129,14 +146,23 @@ impl Ui {
                 ControlFlow::WaitUntil(Instant::now() + Duration::from_millis(1000 / 60));
 
             self.handle_player_messages();
-            if let Some(new_flow) = self.handle_ui_messages() {
+            if let Some(new_flow) = self.handle_frontend_messages() {
                 *control_flow = new_flow;
             }
             self.playlist_manager.update();
 
-            if let Some(StateChanged) = self.state_sub.try_recv() {
+            if let Some(StateChanged) = self.playback_state_sub.try_recv() {
+                let message = serde_json::to_string(&FrontendMessage::PlaybackStateUpdated)
+                    .expect("serializable");
                 self.main_web_view
-                    .evaluate_script(r#"millenium.Message.handle({ kind: "state_updated" })"#)
+                    .evaluate_script(&format!("handle_message({message})"))
+                    .expect("valid script");
+            }
+            if let Some(StateChanged) = self.waveform_state_sub.try_recv() {
+                let message = serde_json::to_string(&FrontendMessage::WaveformStateUpdated)
+                    .expect("serializable");
+                self.main_web_view
+                    .evaluate_script(&format!("handle_message({message})"))
                     .expect("valid script");
             }
 
@@ -178,12 +204,15 @@ impl Ui {
             match message {
                 PlayerMessage::UpdateWaveform(waveform) => {
                     let waveform_lock = waveform.lock().unwrap();
-                    self.state.mutate(|state| {
-                        state.waveform.copy_from(&waveform_lock);
+                    self.waveform_state.mutate(|state| {
+                        state.waveform = Some(Waveform {
+                            spectrum: waveform_lock.spectrum.into(),
+                            amplitude: waveform_lock.amplitude.into(),
+                        });
                     });
                 }
                 PlayerMessage::UpdatePlaybackStatus(status) => {
-                    self.state.mutate(|state| {
+                    self.playback_state.mutate(|state| {
                         state.playback_status = status;
                     });
                 }
@@ -202,15 +231,21 @@ impl Ui {
                 }
                 PlayerMessage::EventStartedTrack => {}
                 PlayerMessage::EventFinishedTrack => {
-                    self.state.mutate(|state| {
-                        state.waveform.copy_from(&Waveform::empty());
+                    self.waveform_state.mutate(|state| {
+                        state.waveform = None;
+                    });
+                    self.playback_state.mutate(|state| {
                         state.playback_status = PlaybackStatus::default();
-                        state.metadata = None;
+                        state.current_track = None;
                     });
                 }
                 PlayerMessage::EventMetadataLoaded(metadata) => {
-                    self.state.mutate(|state| {
-                        state.metadata = Some(metadata);
+                    self.playback_state.mutate(|state| {
+                        state.current_track = Some(Track {
+                            title: metadata.track_title,
+                            artist: metadata.artist,
+                            album: metadata.album,
+                        });
                     });
                 }
 
@@ -219,14 +254,14 @@ impl Ui {
         }
     }
 
-    fn handle_ui_messages(&self) -> Option<ControlFlow> {
-        while let Some(message) = self.ui_sub.try_recv() {
+    fn handle_frontend_messages(&self) -> Option<ControlFlow> {
+        while let Some(message) = self.frontend_sub.try_recv() {
             match message {
-                UiMessage::Quit => return Some(ControlFlow::Exit),
-                UiMessage::DragWindowStart => {
+                FrontendMessage::Quit => return Some(ControlFlow::Exit),
+                FrontendMessage::DragWindowStart => {
                     self.main_web_view.window().drag_window().unwrap();
                 }
-                UiMessage::ShowAlert { level, message } => {
+                FrontendMessage::ShowAlert { level, message } => {
                     let (level, title) = match level {
                         AlertLevel::Info => (rfd::MessageLevel::Info, ""),
                         AlertLevel::Warn => (rfd::MessageLevel::Warning, "Caution"),
@@ -237,6 +272,16 @@ impl Ui {
                         .set_title(title)
                         .set_description(&message)
                         .show();
+                }
+                FrontendMessage::Log { level, message } => {
+                    let level = match level {
+                        LogLevel::Trace => log::Level::Trace,
+                        LogLevel::Debug => log::Level::Debug,
+                        LogLevel::Info => log::Level::Info,
+                        LogLevel::Warn => log::Level::Warn,
+                        LogLevel::Error => log::Level::Error,
+                    };
+                    log::log!(level, "[wasm] {message}");
                 }
                 _ => {}
             }
@@ -294,7 +339,7 @@ impl OsxAppMenu {
 
 fn create_webview(
     window: tao::window::Window,
-    ui_broadcaster: Broadcaster<UiMessage>,
+    ui_broadcaster: Broadcaster<FrontendMessage>,
     internal_protocol: Rc<InternalProtocol>,
 ) -> Result<wry::webview::WebView, FatalError> {
     log::info!(
@@ -314,7 +359,7 @@ fn create_webview(
         .with_ipc_handler({
             let broadcaster = ui_broadcaster.clone();
             move |_window, message| {
-                match serde_json::from_str::<UiMessage>(&message) {
+                match serde_json::from_str::<FrontendMessage>(&message) {
                     Ok(message) => {
                         broadcaster.broadcast(message);
                     }
@@ -330,9 +375,8 @@ fn create_webview(
             if let FileDropEvent::Dropped { paths, .. } = event {
                 let locations = paths.into_iter()
                     .map(|path| Utf8Path::from_path(&path).unwrap().to_string())
-                    .map(Location::path)
                     .collect::<Vec<_>>();
-                ui_broadcaster.broadcast(UiMessage::LoadLocations { locations });
+                ui_broadcaster.broadcast(FrontendMessage::LoadLocations { locations });
             }
             true
         })

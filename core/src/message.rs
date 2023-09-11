@@ -12,20 +12,14 @@
 // You should have received a copy of the GNU General Public License along with Millenium Player.
 // If not, see <https://www.gnu.org/licenses/>.
 
+use crate::audio::{device::AudioDeviceError, source::AudioSourceError};
 use crate::player::waveform::Waveform;
-use crate::{
-    audio::{device::AudioDeviceError, source::AudioSourceError},
-    broadcast::NoChannels,
-};
-use crate::{
-    broadcast::{BroadcastMessage, Channel},
-    playlist::PlaylistMode,
-};
 use crate::{location::Location, metadata::Metadata};
-use std::{
-    borrow::Cow,
-    sync::{Arc, Mutex},
+use millenium_post_office::{
+    broadcast::{BroadcastMessage, Channel},
+    frontend::state::PlaybackStatus,
 };
+use std::sync::{Arc, Mutex};
 
 bitflags::bitflags! {
     #[derive(Copy, Clone, Debug, Eq, PartialEq)]
@@ -134,61 +128,5 @@ impl PartialEq for PlayerMessage {
 
             _ => false,
         }
-    }
-}
-
-#[derive(Clone, Copy, Debug, Default, serde::Serialize)]
-#[cfg_attr(feature = "test-util", derive(PartialEq))]
-pub struct PlaybackStatus {
-    pub playing: bool,
-    pub position_secs: f64,
-    pub duration_secs: Option<f64>,
-}
-
-#[derive(Clone, Debug, serde::Deserialize)]
-#[cfg_attr(test, derive(PartialEq))]
-#[serde(tag = "kind")]
-pub enum UiMessage {
-    Quit,
-    DragWindowStart,
-    MediaControlBack,
-    MediaControlForward,
-    MediaControlPause,
-    MediaControlPlay,
-    MediaControlSeek {
-        position: usize,
-    },
-    MediaControlSkipBack,
-    MediaControlSkipForward,
-    MediaControlStop,
-    MediaControlPlaylistMode {
-        mode: PlaylistMode,
-    },
-    LoadLocations {
-        locations: Vec<Location>,
-    },
-    ShowAlert {
-        level: AlertLevel,
-        message: Cow<'static, str>,
-    },
-}
-
-#[derive(Copy, Clone, Debug, serde::Deserialize)]
-#[cfg_attr(test, derive(Eq, PartialEq))]
-pub enum AlertLevel {
-    Info,
-    Warn,
-    Error,
-}
-
-impl BroadcastMessage for UiMessage {
-    type Channel = NoChannels;
-
-    fn channel(&self) -> Self::Channel {
-        NoChannels
-    }
-
-    fn frequent(&self) -> bool {
-        false
     }
 }

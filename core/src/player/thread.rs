@@ -16,13 +16,13 @@ use crate::audio::device::{
     create_device, AudioDevice, AudioDeviceMessage, AudioDeviceMessageChannel,
 };
 use crate::audio::sink::Sink;
-use crate::broadcast::{BroadcastSubscription, Broadcaster};
 use crate::message::{PlayerMessage, PlayerMessageChannel};
 use crate::player::{
     state::StateManager,
     waveform::{Waveform, WaveformCalculator},
     {PlayerThreadError, PlayerThreadHandle},
 };
+use millenium_post_office::broadcast::{BroadcastSubscription, Broadcaster};
 use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::Duration;

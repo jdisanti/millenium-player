@@ -18,15 +18,15 @@ use super::{
     sink::{AudioBuffer, BoxAudioBuffer, Sink},
     ChannelCount,
 };
-use crate::{
-    audio::SampleRate,
-    broadcast::{BroadcastMessage, BroadcastSubscription, Broadcaster, Channel},
-};
+use crate::audio::SampleRate;
 use cpal::{
     traits::{DeviceTrait, HostTrait, StreamTrait},
     BuildStreamError, Device, DeviceNameError, Host, OutputCallbackInfo, PauseStreamError,
     PlayStreamError, Sample, SampleFormat, SizedSample, Stream, StreamError, SupportedStreamConfig,
     SupportedStreamConfigRange, SupportedStreamConfigsError,
+};
+use millenium_post_office::broadcast::{
+    BroadcastMessage, BroadcastSubscription, Broadcaster, Channel,
 };
 use std::{
     cmp::Ordering,

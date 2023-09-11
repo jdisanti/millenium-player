@@ -13,7 +13,7 @@
 # If not, see <https://www.gnu.org/licenses/>.
 
 [package]
-name = "millenium-desktop-backend"
+name = "expand-template"
 version = "0.1.0"
 edition = "2021"
 license = "GPL-3.0"
@@ -22,37 +22,8 @@ publish = false
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-camino = "1.1.6"
 clap = { version = "4.3.21", default-features = false, features = ["std", "help", "usage"] }
-dirs = "5.0.1"
-http = "0.2.9"
-log = "0.4.20"
-millenium-desktop-assets = { path = "../assets" }
-millenium-core = { path = "../../core" }
-millenium-post-office = { path = "../../post-office", features = ["broadcast", "deserialize"] }
-rfd = "0.11.4"
-serde = { version = "1.0.188", features = ["derive"] }
-serde_json = "1.0.105"
-simplelog = "0.12.1"
-tao = "0.22.2"
-thiserror = "1.0.47"
-time = "0.3.28"
-url = "2.4.0"
-wry = { version = "0.31.1", features = ["transparent"] }
+handlebars = "4.4.0"
 
 [dev-dependencies]
-millenium-core = { path = "../../core", features = ["test-util"] }
-pretty_assertions = "1.4.0"
-
-[target.'cfg(target_os = "macos")'.dependencies]
-muda = "0.8.5"
-
-[target.'cfg(target_os = "windows")'.build-dependencies]
-winres = "0.1.12"
-
-[package.metadata.winres]
-FileDescription = "Millenium Player"
-LegalCopyright = "Copyright (C) 2023 John DiSanti"
-OriginalFilename = "millenium-player.exe"
-ProductName = "Millenium Player"
-ProductVersion = "0.1.0"
+tempfile = "3.8"

@@ -12,20 +12,13 @@
 // You should have received a copy of the GNU General Public License along with Millenium Player.
 // If not, see <https://www.gnu.org/licenses/>.
 
-/// Audio support logic.
-pub mod audio;
+/// Thread broadcast messaging and subscription.
+#[cfg(feature = "broadcast")]
+pub mod broadcast;
 
-/// Location struct that represents file system or network locations.
-pub mod location;
+/// Frontend message types.
+pub mod frontend;
 
-/// Audio player thread.
-pub mod player;
-
-/// Playlist management.
-pub mod playlist;
-
-/// Message types.
-pub mod message;
-
-/// Audio metadata/tags.
-pub mod metadata;
+/// State types.
+#[cfg(feature = "broadcast")]
+pub mod state;

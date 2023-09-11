@@ -13,7 +13,7 @@
 // If not, see <https://www.gnu.org/licenses/>.
 
 use camino::{Utf8Path, Utf8PathBuf};
-use std::{error::Error as StdError, str::FromStr};
+use std::{error::Error as StdError, fmt, str::FromStr};
 use thiserror::Error;
 use url::Url;
 
@@ -105,6 +105,12 @@ impl Location {
         } else {
             InferredLocationType::Unknown
         }
+    }
+}
+
+impl fmt::Display for Location {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.as_str())
     }
 }
 

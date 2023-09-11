@@ -12,7 +12,8 @@
 // You should have received a copy of the GNU General Public License along with Millenium Player.
 // If not, see <https://www.gnu.org/licenses/>.
 
-use crate::{broadcast::Broadcaster, message::PlayerMessage, player::PlayerThreadError};
+use crate::{message::PlayerMessage, player::PlayerThreadError};
+use millenium_post_office::broadcast::Broadcaster;
 use std::any::Any;
 use std::thread;
 
