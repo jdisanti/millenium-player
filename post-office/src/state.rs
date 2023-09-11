@@ -12,13 +12,7 @@
 // You should have received a copy of the GNU General Public License along with Millenium Player.
 // If not, see <https://www.gnu.org/licenses/>.
 
-use crate::{
-    broadcast::{BroadcastMessage, BroadcastSubscription, Broadcaster, NoChannels},
-    message::PlaybackStatus,
-    metadata::Metadata,
-    player::waveform::Waveform,
-    playlist::PlaylistMode,
-};
+use crate::broadcast::{BroadcastMessage, BroadcastSubscription, Broadcaster, NoChannels};
 use std::{cell::RefCell, ops::Deref, rc::Rc};
 
 #[derive(Copy, Clone, Debug)]
@@ -36,44 +30,42 @@ impl BroadcastMessage for StateChanged {
     }
 }
 
-#[derive(Debug)]
-pub struct State {
-    pub metadata: Option<Metadata>,
-    pub playback_status: PlaybackStatus,
-    pub playlist_mode: PlaylistMode,
-    pub waveform: Waveform,
+#[derive(Debug, Default)]
+pub struct State<S> {
+    state: Rc<RefCell<S>>,
+    broadcaster: Broadcaster<StateChanged>,
 }
 
-impl State {
-    pub fn new_handle() -> StateHandle {
-        StateHandle {
-            state: Rc::new(RefCell::new(Self {
-                metadata: None,
-                playback_status: PlaybackStatus::default(),
-                playlist_mode: PlaylistMode::Normal,
-                waveform: Waveform::empty(),
-            })),
-            broadcaster: Broadcaster::new(),
+// Have to manually implement this because we don't want to enforce a Clone bound on S
+impl<S> Clone for State<S> {
+    fn clone(&self) -> Self {
+        Self {
+            state: self.state.clone(),
+            broadcaster: self.broadcaster.clone(),
         }
     }
 }
 
-#[derive(Clone, Debug)]
-pub struct StateHandle {
-    state: Rc<RefCell<State>>,
-    broadcaster: Broadcaster<StateChanged>,
-}
+impl<S> State<S>
+where
+    S: Default,
+{
+    pub fn new() -> Self {
+        Self {
+            state: Rc::new(RefCell::new(S::default())),
+            broadcaster: Broadcaster::new(),
+        }
+    }
 
-impl StateHandle {
     pub fn subscribe(&self, name: &'static str) -> BroadcastSubscription<StateChanged> {
         self.broadcaster.subscribe(name, NoChannels)
     }
 
-    pub fn borrow(&self) -> impl Deref<Target = State> + '_ {
+    pub fn borrow(&self) -> impl Deref<Target = S> + '_ {
         self.state.borrow()
     }
 
-    pub fn mutate(&self, f: impl FnOnce(&mut State)) {
+    pub fn mutate(&self, f: impl FnOnce(&mut S)) {
         f(&mut self.state.borrow_mut());
         self.broadcaster.broadcast(StateChanged);
     }

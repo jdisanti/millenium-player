@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="en">
+    <head>
+        <meta charset="utf-8" />
+
+        <!-- Don't load favicon.ico -->
+        <link rel="icon" href="data:;base64,iVBORw0KGgo=" />
+
+        <link data-trunk rel="rust" data-wasm-opt data-type="main" />
+        <link data-trunk rel="sass" href="style/index.scss" />
+        <link data-trunk rel="copy-dir" href="static" />
+    </head>
+    <body style="background-color:{{webview_background_color}}">
+        <div id="root-content" class="theme-default target-{{target_os}}" style="width:100%;height:100%;"></div>
+
+        <script type="module">
+            import init, { handle_message } from "/millenium-desktop-frontend.js";
+
+            window.handle_message = handle_message;
+
+            (async function() {
+                await init();
+            })();
+        </script>
+    </body>
+</html>

@@ -3,6 +3,9 @@ members = [
     "core",
     "desktop/assets",
     "desktop/backend",
+    "desktop/frontend",
+    "desktop/tools/expand-template",
+    "post-office",
 ]
 
 [profile.release]

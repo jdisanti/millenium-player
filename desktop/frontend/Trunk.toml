@@ -1,0 +1,16 @@
+[build]
+filehash = false
+inject_scripts = false
+dist = "build"
+target = "index.html.hbs"
+
+[clean]
+dist = "build"
+
+[[hooks]]
+stage = "post_build"
+command = "sh"
+command_arguments = [
+    "-c",
+    "cargo run --manifest-path $TRUNK_SOURCE_DIR/../tools/expand-template/Cargo.toml -- $TRUNK_STAGING_DIR/index.html $TRUNK_STAGING_DIR/index.html"
+]

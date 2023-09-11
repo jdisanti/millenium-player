@@ -12,14 +12,13 @@
 // You should have received a copy of the GNU General Public License along with Millenium Player.
 // If not, see <https://www.gnu.org/licenses/>.
 
-use crate::broadcast::{BroadcastSubscription, Broadcaster};
-
 use super::{
     device::{AudioDeviceMessage, AudioDeviceMessageChannel},
     source::{Resampler, SourceBuffer},
     ChannelCount, SampleRate,
 };
 use cpal::{Sample, SampleFormat};
+use millenium_post_office::broadcast::{BroadcastSubscription, Broadcaster};
 use rubato::{SincFixedIn, SincInterpolationParameters, SincInterpolationType, WindowFunction};
 use std::{
     any::Any,

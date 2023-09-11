@@ -32,10 +32,10 @@
 //
 .target-windows .title-bar,
 .target-linux .title-bar {
-    @button-width: 48px;
-    @button-height: 30px;
-    @button-icon-size: 20px;
-    grid-template-columns: [left] @button-width [center] 1fr [right] @button-width;
+    $button-width: 48px;
+    $button-height: 30px;
+    $button-icon-size: 20px;
+    grid-template-columns: [left] $button-width [center] 1fr [right] $button-width;
 
     .third-bar {
         display: flex;
@@ -45,8 +45,8 @@
         grid-column: 1 / 3;
 
         div {
-            width: @button-width;
-            height: @button-height;
+            width: $button-width;
+            height: $button-height;
         }
     }
 
@@ -61,8 +61,8 @@
         button {
             display: none;
             position: relative;
-            width: @button-width;
-            height: @button-height;
+            width: $button-width;
+            height: $button-height;
             background-color: rgba(0, 0, 0, 0);
             border: 0;
             transition: background-color 0.2s;
@@ -78,13 +78,15 @@
             display: block;
         }
         .close i {
+            $top: math.div($button-height - $button-icon-size, 2);
+            $left: math.div($button-width - $button-icon-size, 2);
             position: absolute;
-            top: ((@button-height - @button-icon-size) / 2px);
-            left: ((@button-width - @button-icon-size) / 2px);
-            width: @button-icon-size;
-            height: @button-icon-size;
+            top: $top;
+            left: $left;
+            width: $button-icon-size;
+            height: $button-icon-size;
             background-color: #fff;
-            .mask(url("material-symbols/close.svg") 0 0 / 100% 100%);
+            @include mask(url("static/material-symbols/close.svg") 0 0 / 100% 100%);
         }
     }
 }
@@ -101,7 +103,7 @@
 // MacOS
 //
 .target-macos .title-bar {
-    @button-size: 16px;
+    $button-size: 16px;
 
     padding: 10px;
 
@@ -120,11 +122,11 @@
             position: relative;
             border: 0;
             padding: 0;
-            width: @button-size;
-            height: @button-size;
+            width: $button-size;
+            height: $button-size;
             text-align: center;
             margin-right: 6px;
-            .mask(url("material-symbols/circle.svg") 0 0 / 100% 100%);
+            @include mask(url("static/material-symbols/circle.svg") 0 0 / 100% 100%);
         }
         button:disabled {
             background-color: #5c5b50;
@@ -144,12 +146,12 @@
             position: absolute;
             top: 2px;
             left: 2px;
-            width: (@button-size - 4px);
-            height: (@button-size - 4px);
+            width: ($button-size - 4px);
+            height: ($button-size - 4px);
         }
         &:hover .close i {
             background-color: #900;
-            .mask(url("material-symbols/close.svg") 0 0 / 100% 100%);
+            @include mask(url("static/material-symbols/close.svg") 0 0 / 100% 100%);
         }
     }
 }

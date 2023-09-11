@@ -12,42 +12,29 @@
 // You should have received a copy of the GNU General Public License along with Millenium Player.
 // If not, see <https://www.gnu.org/licenses/>.
 
-@import "mixins";
+use crate::error;
+use millenium_post_office::frontend::message::FrontendMessage;
+use wasm_bindgen::prelude::*;
 
-@font-face {
-    font-family: "Cantarell", sans-serif;
-    src: url("internal://localhost/cantarell/Cantarell-VF.otf");
+#[wasm_bindgen]
+extern "C" {
+    #[wasm_bindgen(js_namespace = ipc, js_name = postMessage)]
+    fn ffi_post_message(value: &str);
+
+    #[allow(unused)]
+    #[wasm_bindgen(js_namespace = console, js_name = log)]
+    fn console_log(value: &str);
 }
 
-*,
-::before,
-::after {
-    box-sizing: border-box;
+#[wasm_bindgen]
+pub fn handle_message(value: JsValue) {
+    match serde_wasm_bindgen::from_value(value) {
+        Ok(message) => crate::handle_message(message),
+        Err(err) => error!("failed to deserialize message: {err}"),
+    }
 }
 
-body {
-    position: relative;
-    display: flex;
-    flex-flow: row nowrap;
-    overflow: hidden;
-    margin: 0;
-    padding: 0;
-    font-family: "Cantarell", sans-serif;
-    user-select: none;
-    -webkit-user-select: none;
-    cursor: default;
+pub fn post_message(message: &FrontendMessage) {
+    let value = serde_json::to_string(&message).expect("serializable");
+    ffi_post_message(&value)
 }
-
-.window {
-    position: relative;
-    display: flex;
-    flex-flow: column nowrap;
-    border-radius: 16px;
-    width: 100%;
-    height: 100%;
-}
-
-@import "media-controls";
-@import "title-bar";
-@import "theme-default";
-@import "simple-mode";

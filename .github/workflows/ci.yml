@@ -18,13 +18,11 @@ jobs:
     - name: Install Rust
       uses: dtolnay/rust-toolchain@master
       with:
-        toolchain: 1.71.1
+        toolchain: 1.72.0
         components: clippy, rustfmt
+        targets: wasm32-unknown-unknown
     - name: Set up Rust cache
       uses: Swatinem/rust-cache@v2
-    - uses: actions/setup-node@v3
-      with:
-        node-version: 18
     - name: Install dependencies
       run: |
         set -eux
@@ -37,11 +35,12 @@ jobs:
       uses: taiki-e/install-action@v2
       with:
         tool: just
+    - name: Install Trunk
+      uses: jetli/trunk-action@v0.4.0
+      with:
+        version: "latest"
     - name: Test
-      run: |
-        set -eux
-        just setup
-        just test
+      run: just test
 
   test-windows:
     runs-on: windows-latest
@@ -51,12 +50,13 @@ jobs:
     - name: Install Rust
       uses: dtolnay/rust-toolchain@master
       with:
-        toolchain: 1.71.1
+        toolchain: 1.72.0
     - name: Set up Rust cache
       uses: Swatinem/rust-cache@v2
-    - uses: actions/setup-node@v3
-      with:
-        node-version: 18
     - name: Tests
       shell: bash
-      run: cargo test --all-features
+      run: |
+        set -eux
+        mkdir -p desktop/frontend/build/static
+        echo -n "test" > desktop/frontend/build/static/test_asset.txt
+        cargo test --all-features

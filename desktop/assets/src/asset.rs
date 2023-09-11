@@ -51,7 +51,7 @@ struct FileSystemAsset {
 impl AssetContent for FileSystemAsset {
     fn contents(&self) -> Result<Cow<'static, [u8]>, AssetError> {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .join("../ui/build")
+            .join("../frontend/build")
             .join(self.path);
         let contents = std::fs::read(&path)
             .map_err(|err| AssetError::new(format!("failed to read asset {path:?}"), err))?;
