@@ -19,6 +19,8 @@ use std::{
     time::{Duration, Instant},
 };
 
+const UPDATES_PER_SECOND: u64 = 30;
+const UPDATE_INTERVAL: Duration = Duration::from_millis(1000 / UPDATES_PER_SECOND);
 const DEFAULT_BINS: usize = 31;
 
 #[derive(Debug)]
@@ -149,10 +151,9 @@ impl<const BIN_COUNT: usize> SpectrumCalculator<BIN_COUNT> {
     }
 
     pub fn calculate(&mut self) -> bool {
-        if self.sample_buffer.len() < self.required_samples {
-            return false;
-        }
-        if Instant::now() - self.last_calculate < Duration::from_millis(1000 / 30) {
+        if self.sample_buffer.len() < self.required_samples
+            || Instant::now() - self.last_calculate < UPDATE_INTERVAL
+        {
             return false;
         }
 
@@ -241,7 +242,9 @@ impl<const BIN_COUNT: usize> AmplitudeCalculator<BIN_COUNT> {
     }
 
     pub fn calculate(&mut self) -> bool {
-        if self.sample_buffer.len() < self.required_samples {
+        if self.sample_buffer.len() < self.required_samples
+            || Instant::now() - self.last_calculate < UPDATE_INTERVAL
+        {
             return false;
         }
         let to_process = self.sample_buffer.drain(..self.required_samples);

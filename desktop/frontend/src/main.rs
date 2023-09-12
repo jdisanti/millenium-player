@@ -12,14 +12,16 @@
 // You should have received a copy of the GNU General Public License along with Millenium Player.
 // If not, see <https://www.gnu.org/licenses/>.
 
-use std::{mem::size_of, rc::Rc};
-
 use crate::component::root::{Root, RootMessage};
 use gloo::net::http::Request;
-use millenium_post_office::frontend::{
-    message::FrontendMessage,
-    state::{PlaybackStateData, Waveform, WaveformStateData},
+use millenium_post_office::{
+    bytes::ne_bytes_to_f32s,
+    frontend::{
+        message::FrontendMessage,
+        state::{PlaybackStateData, Waveform, WaveformStateData},
+    },
 };
+use std::rc::Rc;
 use yew::{platform::spawn_local, AppHandle};
 
 mod component {
@@ -99,8 +101,8 @@ async fn fetch_waveform_data() {
                 }
             };
             let (spectrum_bytes, amplitude_bytes) = bytes.split_at(bytes.len() / 2);
-            let spectrum = bytes_to_f32s(spectrum_bytes);
-            let amplitude = bytes_to_f32s(amplitude_bytes);
+            let spectrum = ne_bytes_to_f32s(spectrum_bytes);
+            let amplitude = ne_bytes_to_f32s(amplitude_bytes);
 
             root_handle_mut().send_message(RootMessage::UpdateWaveformState(WaveformStateData {
                 waveform: Some(Waveform {
@@ -113,12 +115,4 @@ async fn fetch_waveform_data() {
             error!("failed to fetch waveform state: {err}");
         }
     }
-}
-
-fn bytes_to_f32s(bytes: &[u8]) -> Box<[f32]> {
-    let mut f32s = Vec::with_capacity(bytes.len() / size_of::<f32>());
-    for chunk in bytes.chunks_exact(size_of::<f32>()) {
-        f32s.push(f32::from_ne_bytes(chunk.try_into().unwrap()));
-    }
-    f32s.into_boxed_slice()
 }
