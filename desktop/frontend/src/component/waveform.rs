@@ -23,6 +23,9 @@ use web_sys::{
 };
 use yew::prelude::*;
 
+const WIDTH: f32 = 400.0;
+const HEIGHT: f32 = 200.0;
+
 #[derive(Properties, PartialEq)]
 pub struct WaveformProps {
     pub waveform: Rc<RefCell<WaveformStateData>>,
@@ -105,29 +108,21 @@ impl Waveform {
         let waveform = waveform.waveform.as_ref().unwrap();
         let bin_count = waveform.spectrum.len() as f32;
 
-        let center_y = 0.33;
-        let top_height = 0.66 * 1.2;
-        let bottom_height = 0.33 * 1.2;
+        let center_y = (0.33 * HEIGHT).round();
+        let top_scale = 0.8;
+        let bottom_scale = 0.4;
+        let step = (WIDTH / bin_count).round();
 
         for (i, &height) in waveform.spectrum.iter().enumerate() {
-            gl.uniform1f(
-                Some(&resources.uniform_horizontal_offset),
-                i as f32 / bin_count,
-            );
-            gl.uniform1f(Some(&resources.uniform_vertical_offset), center_y);
-            gl.uniform1f(Some(&resources.uniform_vertical_scale), height * top_height);
+            gl.uniform1f(Some(&resources.uniform_offset_x), step * i as f32);
+            gl.uniform1f(Some(&resources.uniform_offset_y), center_y);
+            gl.uniform1f(Some(&resources.uniform_scale_y), height * top_scale);
             gl.draw_arrays(GL::TRIANGLES, 0, 4 * 6);
         }
         for (i, &height) in waveform.amplitude.iter().enumerate() {
-            gl.uniform1f(
-                Some(&resources.uniform_horizontal_offset),
-                i as f32 / bin_count,
-            );
-            gl.uniform1f(Some(&resources.uniform_vertical_offset), center_y);
-            gl.uniform1f(
-                Some(&resources.uniform_vertical_scale),
-                -height * bottom_height,
-            );
+            gl.uniform1f(Some(&resources.uniform_offset_x), step * i as f32);
+            gl.uniform1f(Some(&resources.uniform_offset_y), center_y);
+            gl.uniform1f(Some(&resources.uniform_scale_y), -height * bottom_scale);
             gl.draw_arrays(GL::TRIANGLES, 0, 4 * 6);
         }
     }
@@ -137,9 +132,10 @@ struct Resources {
     _shader_program: WebGlProgram,
     _position_buffer: WebGlBuffer,
     _color_buffer: WebGlBuffer,
-    uniform_vertical_scale: WebGlUniformLocation,
-    uniform_vertical_offset: WebGlUniformLocation,
-    uniform_horizontal_offset: WebGlUniformLocation,
+    uniform_scale_y: WebGlUniformLocation,
+    uniform_offset_y: WebGlUniformLocation,
+    uniform_offset_x: WebGlUniformLocation,
+    _uniform_view_matrix: WebGlUniformLocation,
 }
 
 fn compile_shader(gl: &GL, vertex_code: &str, fragment_code: &str) -> Result<WebGlProgram, String> {
@@ -199,8 +195,8 @@ fn bind_f32_array_buffer_attr(
 }
 
 fn create_buffers(gl: &GL, waveform_bin_count: f32) -> (WebGlBuffer, WebGlBuffer) {
-    let w = 1.0 / waveform_bin_count - 1.0 / 400.0;
-    let h = 1.0 / 4.0;
+    let w = (WIDTH / waveform_bin_count - 1.0).floor();
+    let h = (HEIGHT / 4.0).round();
     let position_buffer = {
         let mut positions: Vec<f32> = Vec::new();
         for f in 0..4 {
@@ -217,10 +213,10 @@ fn create_buffers(gl: &GL, waveform_bin_count: f32) -> (WebGlBuffer, WebGlBuffer
     };
     let color_buffer = {
         let colors = &[
-            [0.25, 0.0, 0.0, 0.0],
-            [0.5, 0.0, 0.0, 0.0],
-            [0.75, 0.0, 0.0, 0.0],
-            [1.0, 0.0, 0.0, 0.0],
+            [0.25, 0.0, 0.0, 1.0],
+            [0.5, 0.0, 0.0, 1.0],
+            [0.75, 0.0, 0.0, 1.0],
+            [1.0, 0.0, 0.0, 1.0],
         ];
         let mut buffer: Vec<f32> = Vec::new();
         for color in colors {
@@ -238,15 +234,16 @@ fn create_gl_resources(gl: &GL, waveform_bin_count: f32) -> Result<Rc<Resources>
             precision mediump float;
             attribute vec2 attr_position;
             attribute vec4 attr_color;
-            uniform float horizontal_offset;
-            uniform float vertical_offset;
-            uniform float vertical_scale;
+            uniform float offset_x;
+            uniform float offset_y;
+            uniform float scale_y;
+            uniform mat4 view_matrix;
             varying vec4 varying_color;
 
             void main() {
-                gl_Position = vec4(
-                    (horizontal_offset + attr_position.x) * 2.0 - 1.0,
-                    (vertical_offset + attr_position.y * vertical_scale) * 2.0 - 1.0,
+                gl_Position = view_matrix * vec4(
+                    attr_position.x + offset_x,
+                    attr_position.y * scale_y + offset_y,
                     0.0,
                     1.0
                 );
@@ -268,27 +265,42 @@ fn create_gl_resources(gl: &GL, waveform_bin_count: f32) -> Result<Rc<Resources>
     bind_f32_array_buffer_attr(gl, 2, &shader_program, &position_buffer, "attr_position");
     bind_f32_array_buffer_attr(gl, 4, &shader_program, &color_buffer, "attr_color");
 
-    let uniform_horizontal_offset = gl
-        .get_uniform_location(&shader_program, "horizontal_offset")
-        .expect("failed to find `horizontal_offset` uniform");
-    gl.uniform1f(Some(&uniform_horizontal_offset), 0.0);
+    let uniform_offset_x = gl
+        .get_uniform_location(&shader_program, "offset_x")
+        .expect("failed to find `offset_x` uniform");
+    gl.uniform1f(Some(&uniform_offset_x), 0.0);
 
-    let uniform_vertical_offset = gl
-        .get_uniform_location(&shader_program, "vertical_offset")
-        .expect("failed to find `vertical_offset` uniform");
-    gl.uniform1f(Some(&uniform_vertical_offset), 0.0);
+    let uniform_offset_y = gl
+        .get_uniform_location(&shader_program, "offset_y")
+        .expect("failed to find `offset_y` uniform");
+    gl.uniform1f(Some(&uniform_offset_y), 0.0);
 
-    let uniform_vertical_scale = gl
-        .get_uniform_location(&shader_program, "vertical_scale")
-        .expect("failed to find `vertical_scale` uniform");
-    gl.uniform1f(Some(&uniform_vertical_scale), 1.0);
+    let uniform_scale_y = gl
+        .get_uniform_location(&shader_program, "scale_y")
+        .expect("failed to find `scale_y` uniform");
+    gl.uniform1f(Some(&uniform_scale_y), 1.0);
+
+    let uniform_view_matrix = gl
+        .get_uniform_location(&shader_program, "view_matrix")
+        .expect("failed to find `view_matrix` uniform");
+
+    // Transform x=[0..400], y=[0..200] to x=[0..2], y=[0..2]
+    // Transform x=2x-1, y=2y-1 to get to x=[-1..1], y=[-1..1]
+    #[rustfmt::skip]
+    gl.uniform_matrix4fv_with_f32_array(Some(&uniform_view_matrix), false, &[
+        2.0 / WIDTH, 0.0,          0.0,  0.0,
+        0.0,         2.0 / HEIGHT, 0.0,  0.0,
+        0.0,         0.0,          1.0,  0.0,
+       -1.0,        -1.0,          0.0,  1.0,
+    ]);
 
     Ok(Rc::new(Resources {
         _shader_program: shader_program,
         _position_buffer: position_buffer,
         _color_buffer: color_buffer,
-        uniform_horizontal_offset,
-        uniform_vertical_offset,
-        uniform_vertical_scale,
+        uniform_offset_x,
+        uniform_offset_y,
+        uniform_scale_y,
+        _uniform_view_matrix: uniform_view_matrix,
     }))
 }

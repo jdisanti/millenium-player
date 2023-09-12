@@ -14,7 +14,10 @@
 
 use http::{Request, Response, StatusCode};
 use millenium_desktop_assets::asset;
-use millenium_post_office::frontend::state::{PlaybackState, WaveformState};
+use millenium_post_office::{
+    bytes::copy_f32s_into_ne_bytes,
+    frontend::state::{PlaybackState, WaveformState},
+};
 use std::{borrow::Cow, mem::size_of};
 
 pub struct InternalProtocol {
@@ -30,7 +33,6 @@ impl InternalProtocol {
         }
     }
 
-    // TODO: unit test
     pub fn handle_request(&self, request: &Request<Vec<u8>>) -> http::Response<Cow<'static, [u8]>> {
         let path = request.uri().path();
         if path.starts_with("/ipc/") {
@@ -101,8 +103,134 @@ impl InternalProtocol {
     }
 }
 
-fn copy_f32s_into_ne_bytes(into: &mut Vec<u8>, data: &[f32]) {
-    for &value in data {
-        into.extend_from_slice(&value.to_ne_bytes()[..]);
+#[cfg(test)]
+mod tests {
+    use std::time::Duration;
+
+    use millenium_post_office::{
+        bytes::ne_bytes_to_f32s,
+        frontend::state::{PlaybackStateData, Track, Waveform},
+    };
+
+    use super::*;
+
+    #[test]
+    fn asset_not_found() {
+        let playback_state = PlaybackState::new();
+        let waveform_state = WaveformState::new();
+        let protocol = InternalProtocol::new(playback_state, waveform_state);
+
+        let request = Request::builder()
+            .uri("/does-not-exist")
+            .method("GET")
+            .body(Vec::new())
+            .unwrap();
+        let response = protocol.handle_request(&request);
+        assert_eq!(404, response.status());
+        assert!(response.body().is_empty());
+    }
+
+    #[test]
+    fn ipc_not_found() {
+        let playback_state = PlaybackState::new();
+        let waveform_state = WaveformState::new();
+        let protocol = InternalProtocol::new(playback_state, waveform_state);
+
+        let request = Request::builder()
+            .uri("/ipc/does-not-exist")
+            .method("GET")
+            .body(Vec::new())
+            .unwrap();
+        let response = protocol.handle_request(&request);
+        assert_eq!(404, response.status());
+        assert!(response.body().is_empty());
+    }
+
+    #[test]
+    fn respond_with_asset() {
+        let playback_state = PlaybackState::new();
+        let waveform_state = WaveformState::new();
+        let protocol = InternalProtocol::new(playback_state, waveform_state);
+
+        let request = Request::builder()
+            .uri("/static/test_asset.txt")
+            .method("GET")
+            .body(Vec::new())
+            .unwrap();
+        let response = protocol.handle_request(&request);
+        assert_eq!(200, response.status());
+        assert_eq!(
+            "text/plain",
+            response.headers().get("content-type").unwrap()
+        );
+        assert_eq!(&b"test"[..], response.body().as_ref());
+    }
+
+    #[test]
+    fn respond_with_playback_data() {
+        let playback_state = PlaybackState::new();
+        let waveform_state = WaveformState::new();
+        let protocol = InternalProtocol::new(playback_state.clone(), waveform_state);
+
+        playback_state.mutate(|state| {
+            state.current_track = Some(Track {
+                title: Some("test-title".into()),
+                artist: Some("test-artist".into()),
+                album: Some("test-album".into()),
+            });
+            state.playback_status.duration_secs = Some(Duration::from_secs(123));
+            state.playback_status.position_secs = Duration::from_secs(12);
+        });
+
+        let request = Request::builder()
+            .uri("/ipc/playback")
+            .method("GET")
+            .body(Vec::new())
+            .unwrap();
+        let response = protocol.handle_request(&request);
+        assert_eq!(200, response.status());
+        assert_eq!(
+            "application/json",
+            response.headers().get("content-type").unwrap()
+        );
+
+        let actual: PlaybackStateData = serde_json::from_slice(response.body()).unwrap();
+        pretty_assertions::assert_eq!(*playback_state.borrow(), actual);
+    }
+
+    #[test]
+    fn respond_with_waveform_data() {
+        let playback_state = PlaybackState::new();
+        let waveform_state = WaveformState::new();
+        let protocol = InternalProtocol::new(playback_state, waveform_state.clone());
+
+        waveform_state.mutate(|state| {
+            state.waveform = Some(Waveform {
+                spectrum: Box::new([1.0, 2.0, 3.0]),
+                amplitude: Box::new([4.0, 5.0, 6.0]),
+            })
+        });
+
+        let request = Request::builder()
+            .uri("/ipc/waveform")
+            .method("GET")
+            .body(Vec::new())
+            .unwrap();
+        let response = protocol.handle_request(&request);
+        assert_eq!(200, response.status());
+        assert_eq!(
+            "application/octet-stream",
+            response.headers().get("content-type").unwrap()
+        );
+
+        let body = response.body();
+        let spectrum_bytes = &body[0..body.len() / 2];
+        let amplitude_bytes = &body[body.len() / 2..];
+
+        let spectrum = ne_bytes_to_f32s(spectrum_bytes);
+        let amplitude = ne_bytes_to_f32s(amplitude_bytes);
+
+        assert_eq!(&[1.0, 2.0, 3.0], &*spectrum);
+        assert_eq!(&[4.0, 5.0, 6.0], &*amplitude);
     }
 }

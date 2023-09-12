@@ -12,16 +12,20 @@
 // You should have received a copy of the GNU General Public License along with Millenium Player.
 // If not, see <https://www.gnu.org/licenses/>.
 
-/// Thread broadcast messaging and subscription.
-#[cfg(feature = "broadcast")]
-pub mod broadcast;
+use std::mem::size_of;
 
-/// Utilities for converting to byte slices and back.
-pub mod bytes;
+/// Copy the given slice of f32s into the given vec of bytes using native endianness.
+pub fn copy_f32s_into_ne_bytes(into: &mut Vec<u8>, data: &[f32]) {
+    for &value in data {
+        into.extend_from_slice(&value.to_ne_bytes()[..]);
+    }
+}
 
-/// Frontend message types.
-pub mod frontend;
-
-/// State types.
-#[cfg(feature = "broadcast")]
-pub mod state;
+/// Convert native endian bytes to f32s.
+pub fn ne_bytes_to_f32s(bytes: &[u8]) -> Box<[f32]> {
+    let mut f32s = Vec::with_capacity(bytes.len() / size_of::<f32>());
+    for chunk in bytes.chunks_exact(size_of::<f32>()) {
+        f32s.push(f32::from_ne_bytes(chunk.try_into().unwrap()));
+    }
+    f32s.into_boxed_slice()
+}
