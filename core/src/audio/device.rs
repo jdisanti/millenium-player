@@ -540,7 +540,9 @@ fn write_audio_data<S>(
     S: Sample + 'static,
 {
     let output_buffer = box_output_buffer.expect_mut::<S>();
-    let needs_more_data = output_buffer.len() < *desired_output_buffer_size;
+    if output_buffer.len() < *desired_output_buffer_size {
+        broadcaster.broadcast(AudioDeviceMessage::RequestAudioData);
+    }
 
     let len_to_consume = usize::min(output_buffer.len(), data.len());
     frames_consumed.fetch_add(
@@ -566,8 +568,6 @@ fn write_audio_data<S>(
             if filled_in_silence {
                 broadcaster.broadcast(AudioDeviceMessage::EventPlaybackFinished);
                 *state = DeviceState::SilenceSince(Instant::now());
-            } else if needs_more_data {
-                broadcaster.broadcast(AudioDeviceMessage::RequestAudioData);
             }
         }
         DeviceState::SilenceSince(start) => {
@@ -973,6 +973,13 @@ mod tests {
         assert!(
             matches!(
                 test_sub.try_recv().unwrap(),
+                AudioDeviceMessage::RequestAudioData
+            ),
+            "it should always request audio data when it needs more"
+        );
+        assert!(
+            matches!(
+                test_sub.try_recv().unwrap(),
                 AudioDeviceMessage::EventPlaybackFinished
             ),
             "it should broadcast that playback is finished"
@@ -1005,6 +1012,13 @@ mod tests {
         assert!(
             matches!(context.state, DeviceState::Idle),
             "it should switch to the Idle state"
+        );
+        assert!(
+            matches!(
+                test_sub.try_recv().unwrap(),
+                AudioDeviceMessage::RequestAudioData
+            ),
+            "it should always request audio data when it needs more"
         );
         assert!(
             matches!(
