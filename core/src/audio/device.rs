@@ -511,6 +511,7 @@ impl AudioDevice for CpalAudioDevice {
     }
 }
 
+#[cfg_attr(test, derive(Debug, Eq, PartialEq))]
 enum DeviceState {
     Idle,
     Playing,
@@ -525,7 +526,6 @@ struct WriteAudioDataContext {
     state: DeviceState,
 }
 
-// TODO unit test
 fn write_audio_data<S>(
     WriteAudioDataContext {
         channels,
@@ -540,9 +540,7 @@ fn write_audio_data<S>(
     S: Sample + 'static,
 {
     let output_buffer = box_output_buffer.expect_mut::<S>();
-    if output_buffer.len() < *desired_output_buffer_size {
-        broadcaster.broadcast(AudioDeviceMessage::RequestAudioData);
-    }
+    let needs_more_data = output_buffer.len() < *desired_output_buffer_size;
 
     let len_to_consume = usize::min(output_buffer.len(), data.len());
     frames_consumed.fetch_add(
@@ -568,6 +566,8 @@ fn write_audio_data<S>(
             if filled_in_silence {
                 broadcaster.broadcast(AudioDeviceMessage::EventPlaybackFinished);
                 *state = DeviceState::SilenceSince(Instant::now());
+            } else if needs_more_data {
+                broadcaster.broadcast(AudioDeviceMessage::RequestAudioData);
             }
         }
         DeviceState::SilenceSince(start) => {
@@ -850,6 +850,201 @@ mod tests {
             Some(cfg(2, 48000, I16).with_sample_rate(cpal::SampleRate(48000))),
             select_config([cfg(2, 48000, I8), cfg(2, 48000, U32), cfg(2, 48000, I16)].into_iter())
                 .unwrap()
+        );
+    }
+
+    #[test]
+    fn write_audio_data_copy_data() {
+        let mut output_buffer =
+            BoxAudioBuffer::new(SampleFormat::F32, AudioBuffer::new(vec![128f32; 2000]));
+        let frames_consumed = Arc::new(AtomicU64::new(0));
+        let broadcaster = Broadcaster::new();
+        let test_sub = broadcaster.subscribe("test", AudioDeviceMessageChannel::All);
+
+        let mut output = vec![0f32; 1000];
+        let mut context = WriteAudioDataContext {
+            channels: 1,
+            desired_output_buffer_size: 1000,
+            broadcaster: broadcaster.clone(),
+            frames_consumed,
+            state: DeviceState::Playing,
+        };
+
+        write_audio_data(&mut context, &mut output_buffer, &mut output);
+
+        assert_eq!(
+            1000,
+            output_buffer.get_mut::<f32>().unwrap().len(),
+            "it should drain 1000 samples from the output buffer"
+        );
+        assert!(
+            output.iter().all(|&s| s == 128.0),
+            "it should have copied the samples into the output"
+        );
+        assert_eq!(
+            DeviceState::Playing,
+            context.state,
+            "it should remain in the playing state"
+        );
+        assert!(
+            test_sub.try_recv().is_none(),
+            "it should not broadcast any message"
+        );
+    }
+
+    #[test]
+    fn write_audio_data_request_more_audio() {
+        let mut output_buffer =
+            BoxAudioBuffer::new(SampleFormat::F32, AudioBuffer::new(vec![128f32; 2000]));
+        let frames_consumed = Arc::new(AtomicU64::new(0));
+        let broadcaster = Broadcaster::new();
+        let test_sub = broadcaster.subscribe("test", AudioDeviceMessageChannel::All);
+
+        let mut output = vec![0f32; 1000];
+        let mut context = WriteAudioDataContext {
+            channels: 1,
+            desired_output_buffer_size: 3000,
+            broadcaster: broadcaster.clone(),
+            frames_consumed,
+            state: DeviceState::Playing,
+        };
+
+        write_audio_data(&mut context, &mut output_buffer, &mut output);
+
+        assert_eq!(
+            1000,
+            output_buffer.get_mut::<f32>().unwrap().len(),
+            "it should drain 1000 samples from the output buffer"
+        );
+        assert!(
+            output.iter().all(|&s| s == 128.0),
+            "it should have copied the samples into the output"
+        );
+        assert_eq!(
+            DeviceState::Playing,
+            context.state,
+            "it should remain in the playing state"
+        );
+        assert!(
+            matches!(
+                test_sub.try_recv().unwrap(),
+                AudioDeviceMessage::RequestAudioData
+            ),
+            "it should request audio data"
+        );
+    }
+
+    #[test]
+    fn write_audio_data_playback_finished() {
+        let mut output_buffer =
+            BoxAudioBuffer::new(SampleFormat::F32, AudioBuffer::new(vec![128f32; 500]));
+        let frames_consumed = Arc::new(AtomicU64::new(0));
+        let broadcaster = Broadcaster::new();
+        let test_sub = broadcaster.subscribe("test", AudioDeviceMessageChannel::All);
+
+        let mut output = vec![123f32; 1000];
+        let mut context = WriteAudioDataContext {
+            channels: 1,
+            desired_output_buffer_size: 3000,
+            broadcaster: broadcaster.clone(),
+            frames_consumed,
+            state: DeviceState::Playing,
+        };
+
+        write_audio_data(&mut context, &mut output_buffer, &mut output);
+
+        assert_eq!(
+            0,
+            output_buffer.get_mut::<f32>().unwrap().len(),
+            "it should drain all the remaining samples from the output buffer"
+        );
+        assert!(
+            output.iter().take(500).all(|&s| s == 128.0),
+            "it should have copied the 500 samples into the output"
+        );
+        assert!(
+            output.iter().skip(500).all(|&s| s == 0.0),
+            "it should have filled the remaining with silence"
+        );
+        assert!(
+            matches!(context.state, DeviceState::SilenceSince(_)),
+            "it should switch to the SilenceSince state"
+        );
+        assert!(
+            matches!(
+                test_sub.try_recv().unwrap(),
+                AudioDeviceMessage::EventPlaybackFinished
+            ),
+            "it should broadcast that playback is finished"
+        );
+    }
+
+    #[test]
+    fn write_audio_data_idle_device() {
+        let mut output_buffer =
+            BoxAudioBuffer::new(SampleFormat::F32, AudioBuffer::new(Vec::<f32>::new()));
+        let frames_consumed = Arc::new(AtomicU64::new(0));
+        let broadcaster = Broadcaster::new();
+        let test_sub = broadcaster.subscribe("test", AudioDeviceMessageChannel::All);
+
+        let mut output = vec![123f32; 1000];
+        let mut context = WriteAudioDataContext {
+            channels: 1,
+            desired_output_buffer_size: 3000,
+            broadcaster: broadcaster.clone(),
+            frames_consumed,
+            state: DeviceState::SilenceSince(Instant::now() - Duration::from_secs(10)),
+        };
+
+        write_audio_data(&mut context, &mut output_buffer, &mut output);
+
+        assert!(
+            output.iter().all(|&s| s == 0.0),
+            "it should have filled the output with silence"
+        );
+        assert!(
+            matches!(context.state, DeviceState::Idle),
+            "it should switch to the Idle state"
+        );
+        assert!(
+            matches!(
+                test_sub.try_recv().unwrap(),
+                AudioDeviceMessage::EventAudioDeviceIdle
+            ),
+            "it should broadcast that the device is idle"
+        );
+    }
+
+    #[test]
+    fn write_audio_data_idle_back_to_playing() {
+        let mut output_buffer =
+            BoxAudioBuffer::new(SampleFormat::F32, AudioBuffer::new(vec![128f32; 3000]));
+        let frames_consumed = Arc::new(AtomicU64::new(0));
+        let broadcaster = Broadcaster::new();
+        let test_sub = broadcaster.subscribe("test", AudioDeviceMessageChannel::All);
+
+        let mut output = vec![123f32; 1000];
+        let mut context = WriteAudioDataContext {
+            channels: 1,
+            desired_output_buffer_size: 3000,
+            broadcaster: broadcaster.clone(),
+            frames_consumed,
+            state: DeviceState::Idle,
+        };
+
+        write_audio_data(&mut context, &mut output_buffer, &mut output);
+
+        assert!(
+            output.iter().all(|&s| s == 128.0),
+            "it should have copied the samples into the output"
+        );
+        assert!(
+            matches!(context.state, DeviceState::Playing),
+            "it should switch to the Playing state"
+        );
+        assert!(
+            test_sub.try_recv().is_none(),
+            "it shouldn't broadcast a message"
         );
     }
 }
