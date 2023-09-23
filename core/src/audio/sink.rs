@@ -245,6 +245,7 @@ where
 /// to stop the virality of generics.
 pub struct BoxAudioBuffer {
     format: SampleFormat,
+    inner_format: &'static str,
     inner: Box<dyn Any + Send>,
 }
 
@@ -253,6 +254,7 @@ impl BoxAudioBuffer {
     pub fn new<S: Sample + Send + 'static>(format: SampleFormat, buffer: AudioBuffer<S>) -> Self {
         Self {
             format,
+            inner_format: std::any::type_name::<S>(),
             inner: Box::new(buffer),
         }
     }
@@ -261,6 +263,20 @@ impl BoxAudioBuffer {
     pub fn empty(format: SampleFormat) -> Self {
         Self {
             format,
+            inner_format: match format {
+                SampleFormat::F32 => "f32",
+                SampleFormat::F64 => "f64",
+                SampleFormat::I16 => "i16",
+                SampleFormat::I32 => "i32",
+                SampleFormat::I8 => "i8",
+                SampleFormat::U16 => "u16",
+                SampleFormat::U32 => "u32",
+                SampleFormat::U8 => "u8",
+                SampleFormat::I64 | SampleFormat::U64 => {
+                    unreachable!("unsupported: {}", format)
+                }
+                _ => unreachable!("{}", format),
+            },
             inner: match format {
                 SampleFormat::F32 => Box::new(AudioBuffer::<f32>::new(Vec::new())),
                 SampleFormat::F64 => Box::new(AudioBuffer::<f64>::new(Vec::new())),
@@ -325,6 +341,15 @@ impl BoxAudioBuffer {
     /// Panics if the underlying type is not the expected type.
     #[inline]
     pub fn expect_mut<S: Sample + 'static>(&mut self) -> &mut AudioBuffer<S> {
-        self.get_mut().expect("failed to downcast audio buffer")
+        let inner_format = self.inner_format;
+        self.get_mut()
+            .ok_or_else(|| {
+                format!(
+                    "failed to downcast {} audio buffer to {}",
+                    inner_format,
+                    std::any::type_name::<S>()
+                )
+            })
+            .unwrap()
     }
 }

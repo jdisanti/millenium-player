@@ -18,7 +18,10 @@ use std::borrow::Cow;
 #[cfg_attr(feature = "serialize", derive(serde::Serialize))]
 #[cfg_attr(feature = "deserialize", derive(serde::Deserialize))]
 #[cfg_attr(any(test, feature = "test-util"), derive(PartialEq))]
-#[serde(tag = "kind")]
+#[cfg_attr(
+    any(feature = "serialize", feature = "deserialize"),
+    serde(tag = "kind")
+)]
 pub enum FrontendMessage {
     DragWindowStart,
     LoadLocations {
