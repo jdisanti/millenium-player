@@ -28,6 +28,7 @@ use millenium_post_office::{
     },
     state::StateChanged,
 };
+use muda::{ContextMenu, Menu, MenuEvent, MenuItem, PredefinedMenuItem};
 use std::{
     rc::Rc,
     time::{Duration, Instant},
@@ -35,8 +36,55 @@ use std::{
 use tao::{
     dpi::{LogicalSize, Size},
     event_loop::{ControlFlow, EventLoop, EventLoopBuilder},
+    window::Window,
 };
 use wry::webview::{webview_version, FileDropEvent};
+
+struct MediaControlsMenu {
+    menu: Menu,
+    item_open: MenuItem,
+    item_show_hide_playlist: MenuItem,
+}
+
+impl MediaControlsMenu {
+    fn new() -> Self {
+        let menu = Menu::new();
+        let item_open = MenuItem::new("Open", true, None);
+        let item_show_hide_playlist = MenuItem::new("Show/hide playlist", true, None);
+        menu.append_items(&[
+            &item_open,
+            &PredefinedMenuItem::separator(),
+            &item_show_hide_playlist,
+        ])
+        .unwrap();
+        Self {
+            menu,
+            item_open,
+            item_show_hide_playlist,
+        }
+    }
+
+    fn show(&self, window: &Window) {
+        #[cfg(target_os = "windows")]
+        {
+            use tao::platform::windows::WindowExtWindows;
+            self.menu
+                .show_context_menu_for_hwnd(window.hwnd() as _, None);
+        }
+        #[cfg(target_os = "macos")]
+        {
+            use tao::platform::macos::WindowExtMacOS;
+            self.menu
+                .show_context_menu_for_nsview(window.ns_view() as _, None);
+        }
+        #[cfg(target_os = "linux")]
+        {
+            use tao::platform::unix::WindowExtUnix;
+            self.menu
+                .show_context_menu_for_gtk_window(window.gtk_window() as _, None);
+        }
+    }
+}
 
 pub struct Ui {
     /// MacOS has the special "always at the top" menu bar that needs to get populated.
@@ -57,6 +105,8 @@ pub struct Ui {
     playback_state_sub: BroadcastSubscription<StateChanged>,
     waveform_state: WaveformState,
     waveform_state_sub: BroadcastSubscription<StateChanged>,
+
+    media_controls_menu: MediaControlsMenu,
 }
 
 impl Ui {
@@ -123,6 +173,8 @@ impl Ui {
             playback_state_sub,
             waveform_state,
             waveform_state_sub,
+
+            media_controls_menu: MediaControlsMenu::new(),
         })
     }
 
@@ -132,6 +184,7 @@ impl Ui {
         log::info!("starting event loop");
         let mut start_time = Some(Instant::now());
 
+        let menu_event_receiver = MenuEvent::receiver();
         let event_loop = self.event_loop.take().expect("event loop");
         event_loop.run(move |event, _, control_flow| {
             // Show the window after 150 milliseconds to avoid the flashing white window on startup
@@ -182,6 +235,30 @@ impl Ui {
                 } => *control_flow = ControlFlow::Exit,
 
                 _ => (),
+            }
+
+            if let Ok(event) = menu_event_receiver.try_recv() {
+                if event.id == self.media_controls_menu.item_open.id() {
+                    let picked = rfd::FileDialog::new()
+                        .add_filter(
+                            "Audio file or playlist",
+                            &[
+                                "m3u", "m3u8", "pls", "mp3", "flac", "ogg", "wav", "aac", "m4a",
+                            ],
+                        )
+                        .set_title("Open audio file(s) or playlist")
+                        .pick_files();
+                    if let Some(picked) = picked {
+                        self.frontend_sub.broadcast(FrontendMessage::LoadLocations {
+                            locations: picked
+                                .iter()
+                                .map(|path| Utf8Path::from_path(path).unwrap().to_string())
+                                .collect(),
+                        });
+                    }
+                } else if event.id == self.media_controls_menu.item_show_hide_playlist.id() {
+                    log::info!("TODO: show/hide playlist");
+                }
             }
 
             if let Err(err) = self.healthcheck() {
@@ -260,6 +337,9 @@ impl Ui {
                 FrontendMessage::Quit => return Some(ControlFlow::Exit),
                 FrontendMessage::DragWindowStart => {
                     self.main_web_view.window().drag_window().unwrap();
+                }
+                FrontendMessage::MediaControlMenu => {
+                    self.media_controls_menu.show(self.main_web_view.window());
                 }
                 FrontendMessage::ShowAlert { level, message } => {
                     let (level, title) = match level {

@@ -25,6 +25,7 @@ pub enum MediaControl {
     Forward,
     SkipForward,
     PlaylistMode(PlaylistMode),
+    Menu,
 }
 
 impl MediaControl {
@@ -45,6 +46,7 @@ impl MediaControl {
                 PlaylistMode::RepeatOne => playlist_mode("repeat one"),
                 PlaylistMode::RepeatAll => playlist_mode("repeat all"),
             },
+            Self::Menu => "Menu".into(),
         }
     }
 
@@ -62,6 +64,7 @@ impl MediaControl {
                 PlaylistMode::RepeatOne => "media-control-playlist-mode-repeat-one",
                 PlaylistMode::RepeatAll => "media-control-playlist-mode-repeat-all",
             },
+            Self::Menu => "media-control-menu",
         }
     }
 
@@ -87,6 +90,7 @@ impl MediaControl {
                     mode: PlaylistMode::Normal,
                 },
             },
+            Self::Menu => FrontendMessage::MediaControlMenu,
         }
     }
 }

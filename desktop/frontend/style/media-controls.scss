@@ -97,3 +97,8 @@ button.media-control {
     background-color: #fff;
     @include mask(url("static/material-icons/repeat.svg") 0 0 / 100% 100%);
 }
+
+.media-control-menu i {
+    background-color: #fff;
+    @include mask(url("static/material-icons/menu.svg") 0 0 / 100% 100%);
+}
