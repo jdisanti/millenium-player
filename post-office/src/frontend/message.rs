@@ -44,6 +44,7 @@ pub enum FrontendMessage {
     MediaControlPlaylistMode {
         mode: PlaylistMode,
     },
+    MediaControlMenu,
     Quit,
     ShowAlert {
         level: AlertLevel,

@@ -93,6 +93,7 @@ impl Component for Root {
                         <MediaControlButton kind={MediaControl::Forward} />
                         <MediaControlButton kind={MediaControl::SkipForward} />
                         <MediaControlPlaylistMode mode={PlaylistMode::Normal} />
+                        <MediaControlButton kind={MediaControl::Menu} />
                     </div>
                 </div>
             </>
