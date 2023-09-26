@@ -388,7 +388,7 @@ struct OsxAppMenu {
 #[cfg(target_os = "macos")]
 impl OsxAppMenu {
     fn new() -> Result<Self, FatalError> {
-        use muda::{AboutMetadata, Menu, PredefinedMenuItem, Submenu};
+        use muda::{AboutMetadata, Submenu};
 
         let menu = Menu::new();
 
