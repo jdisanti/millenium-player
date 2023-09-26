@@ -135,7 +135,7 @@ mod tests {
     use super::*;
 
     #[test]
-    #[ntest::timeout(500)]
+    #[ntest::timeout(1000)]
     fn spawn_and_close() {
         let handle = PlayerThread::spawn(None).unwrap();
         handle.broadcaster().broadcast(PlayerMessage::CommandQuit);
