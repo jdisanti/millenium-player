@@ -74,7 +74,8 @@ impl Component for Root {
         let waveform = self
             .waveform_state
             .as_ref()
-            .map(|w| html!(<Waveform waveform={w} />));
+            .map(|w| html!(<Waveform waveform={w} />))
+            .unwrap_or_else(|| html!(<div class="waveform-placeholder" />));
         let media_info = self
             .playback_state
             .as_ref()
