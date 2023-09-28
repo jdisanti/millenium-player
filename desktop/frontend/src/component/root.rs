@@ -13,12 +13,7 @@
 // If not, see <https://www.gnu.org/licenses/>.
 
 use crate::component::{
-    media_controls::MediaControlButton,
-    media_controls::MediaControlPlaylistMode,
-    media_controls::{MediaControl, MediaControlButtonPausePlay},
-    media_info::MediaInfo,
-    title_bar::TitleBar,
-    waveform::Waveform,
+    media_controls::MediaControls, media_info::MediaInfo, title_bar::TitleBar, waveform::Waveform,
 };
 use millenium_post_office::frontend::state::{PlaybackStateData, PlaylistMode, WaveformStateData};
 use std::{cell::RefCell, rc::Rc};
@@ -88,13 +83,7 @@ impl Component for Root {
                     <TitleBar />
                     <div style="padding:10px;">
                         {media_info}
-                        <MediaControlButton kind={MediaControl::SkipBack} />
-                        <MediaControlButton kind={MediaControl::Back} />
-                        <MediaControlButtonPausePlay playing={playing} />
-                        <MediaControlButton kind={MediaControl::Forward} />
-                        <MediaControlButton kind={MediaControl::SkipForward} />
-                        <MediaControlPlaylistMode mode={PlaylistMode::Normal} />
-                        <MediaControlButton kind={MediaControl::Menu} />
+                        <MediaControls playing={playing} playlist_mode={PlaylistMode::Normal} />
                     </div>
                 </div>
             </>

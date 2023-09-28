@@ -30,6 +30,7 @@ mod component {
     pub mod media_info;
     pub mod root;
     pub mod title_bar;
+    pub mod volume_slider;
     pub mod waveform;
 }
 mod log;

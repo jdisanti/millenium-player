@@ -70,6 +70,7 @@ asset! {
     ICON_SKIP_NEXT => "static/material-icons/skip_next.svg" / "image/svg+xml" / "Media control icon.",
     ICON_SKIP_PREVIOUS => "static/material-icons/skip_previous.svg" / "image/svg+xml" / "Media control icon.",
     ICON_STOP => "static/material-icons/stop.svg" / "image/svg+xml" / "Media control icon.",
+    IMAGE_VOLUME_SLIDER => "static/volume-slider.svg" / "image/svg+xml" / "Volume slider background.",
     JS_INDEX => "millenium-desktop-frontend.js" / "text/javascript" / "The JavaScript entry point.",
     TXT_TEST_ASSET => "static/test_asset.txt" / "text/plain" / "Asset for unit testing.",
     WASM_INDEX => "millenium-desktop-frontend_bg.wasm" / "application/wasm" / "The JavaScript entry point.",

@@ -12,44 +12,19 @@
 // You should have received a copy of the GNU General Public License along with Millenium Player.
 // If not, see <https://www.gnu.org/licenses/>.
 
-@use "sass:math";
-@import "mixins";
+use yew::prelude::*;
 
-@font-face {
-    font-family: "Cantarell", sans-serif;
-    src: url("internal://localhost/cantarell/Cantarell-VF.otf");
+#[derive(Properties, PartialEq)]
+pub struct VolumeSliderProps {
+    pub volume: u8,
 }
 
-*,
-::before,
-::after {
-    box-sizing: border-box;
+#[function_component(VolumeSlider)]
+pub fn volume_slider(props: &VolumeSliderProps) -> Html {
+    html! {
+        <div class="volume-slider">
+            <i></i>
+            <input type="range" min="0" max="100" value={props.volume.to_string()} />
+        </div>
+    }
 }
-
-body {
-    position: relative;
-    display: flex;
-    flex-flow: row nowrap;
-    overflow: hidden;
-    margin: 0;
-    padding: 0;
-    font-family: "Cantarell", sans-serif;
-    user-select: none;
-    -webkit-user-select: none;
-    cursor: default;
-}
-
-.window {
-    position: relative;
-    display: flex;
-    flex-flow: column nowrap;
-    border-radius: 16px;
-    width: 100%;
-    height: 100%;
-}
-
-@import "media-controls";
-@import "title-bar";
-@import "theme-default";
-@import "simple-mode";
-@import "volume-slider";
