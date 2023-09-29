@@ -52,6 +52,7 @@ macro_rules! asset {
 asset! {
     CSS_INDEX => "index.css" / "text/css" / "The CSS file for the UI.",
     FONT_CANTARELL => "static/cantarell/Cantarell-VF.otf" / "font/otf" / "The main font for the UI.",
+    FONT_DOT_DIGITAL_7 => "static/enhanced-dot-digital-7/EnhancedDotDigital7.ttf" / "font/ttf" / "Secondary LCD-like font.",
     HTML_INDEX => "index.html" / "text/html" / "The root HTML file for the UI.",
     ICON_ALBUM => "static/material-icons/album.svg" / "image/svg+xml" / "Media control icon.",
     ICON_CIRCLE => "static/material-symbols/circle.svg" / "image/svg+xml" / "Circle icon used for the traffic light in MacOS.",

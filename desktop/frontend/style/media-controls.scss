@@ -41,37 +41,37 @@ button.media-control {
 
 .media-control-skip-back i {
     background-color: #fff;
-    @include mask(url("static/material-icons/skip_previous.svg") 0 0 / 100% 100%);
+    @include mask(url("/static/material-icons/skip_previous.svg") 0 0 / 100% 100%);
 }
 
 .media-control-back i {
     background-color: #fff;
-    @include mask(url("static/material-icons/fast_rewind.svg") 0 0 / 100% 100%);
+    @include mask(url("/static/material-icons/fast_rewind.svg") 0 0 / 100% 100%);
 }
 
 .media-control-play i {
     background-color: #fff;
-    @include mask(url("static/material-icons/play.svg") 0 0 / 100% 100%);
+    @include mask(url("/static/material-icons/play.svg") 0 0 / 100% 100%);
 }
 
 .media-control-pause i {
     background-color: #fff;
-    @include mask(url("static/material-icons/pause.svg") 0 0 / 100% 100%);
+    @include mask(url("/static/material-icons/pause.svg") 0 0 / 100% 100%);
 }
 
 .media-control-stop i {
     background-color: #fff;
-    @include mask(url("static/material-icons/stop.svg") 0 0 / 100% 100%);
+    @include mask(url("/static/material-icons/stop.svg") 0 0 / 100% 100%);
 }
 
 .media-control-forward i {
     background-color: #fff;
-    @include mask(url("static/material-icons/fast_forward.svg") 0 0 / 100% 100%);
+    @include mask(url("/static/material-icons/fast_forward.svg") 0 0 / 100% 100%);
 }
 
 .media-control-skip-forward i {
     background-color: #fff;
-    @include mask(url("static/material-icons/skip_next.svg") 0 0 / 100% 100%);
+    @include mask(url("/static/material-icons/skip_next.svg") 0 0 / 100% 100%);
 }
 
 .media-control-playlist-mode-normal i {
@@ -80,25 +80,25 @@ button.media-control {
     left: 2px !important;
     width: 26px !important;
     height: 26px !important;
-    @include mask(url("static/material-icons/forward_media.svg") 0 0 / 26px 26px);
+    @include mask(url("/static/material-icons/forward_media.svg") 0 0 / 26px 26px);
 }
 
 .media-control-playlist-mode-shuffle i {
     background-color: #fff;
-    @include mask(url("static/material-icons/shuffle.svg") 0 0 / 100% 100%);
+    @include mask(url("/static/material-icons/shuffle.svg") 0 0 / 100% 100%);
 }
 
 .media-control-playlist-mode-repeat-one i {
     background-color: #fff;
-    @include mask(url("static/material-icons/repeat_one.svg") 0 0 / 100% 100%);
+    @include mask(url("/static/material-icons/repeat_one.svg") 0 0 / 100% 100%);
 }
 
 .media-control-playlist-mode-repeat-all i {
     background-color: #fff;
-    @include mask(url("static/material-icons/repeat.svg") 0 0 / 100% 100%);
+    @include mask(url("/static/material-icons/repeat.svg") 0 0 / 100% 100%);
 }
 
 .media-control-menu i {
     background-color: #fff;
-    @include mask(url("static/material-icons/menu.svg") 0 0 / 100% 100%);
+    @include mask(url("/static/material-icons/menu.svg") 0 0 / 100% 100%);
 }
