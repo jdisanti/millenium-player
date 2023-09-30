@@ -16,8 +16,12 @@
 @import "mixins";
 
 @font-face {
-    font-family: "Cantarell", sans-serif;
-    src: url("internal://localhost/cantarell/Cantarell-VF.otf");
+    font-family: "Cantarell";
+    src: url("/static/cantarell/Cantarell-VF.otf") format("woff2");
+}
+@font-face {
+    font-family: "EnhancedDotDigital7";
+    src: url("/static/enhanced-dot-digital-7/EnhancedDotDigital7.ttf") format("truetype");
 }
 
 *,
@@ -52,3 +56,4 @@ body {
 @import "title-bar";
 @import "theme-default";
 @import "simple-mode";
+@import "volume-slider";

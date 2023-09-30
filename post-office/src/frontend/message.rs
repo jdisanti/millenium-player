@@ -14,6 +14,8 @@
 
 use std::borrow::Cow;
 
+use crate::types::Volume;
+
 #[derive(Clone, Debug)]
 #[cfg_attr(feature = "serialize", derive(serde::Serialize))]
 #[cfg_attr(feature = "deserialize", derive(serde::Deserialize))]
@@ -45,6 +47,9 @@ pub enum FrontendMessage {
         mode: PlaylistMode,
     },
     MediaControlMenu,
+    MediaControlVolume {
+        volume: Volume,
+    },
     Quit,
     ShowAlert {
         level: AlertLevel,

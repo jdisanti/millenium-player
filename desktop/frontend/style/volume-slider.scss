@@ -1,0 +1,97 @@
+// This file is part of Millenium Player.
+// Copyright (C) 2023 John DiSanti.
+//
+// Millenium Player is free software: you can redistribute it and/or modify it under the terms of
+// the GNU General Public License as published by the Free Software Foundation, either version 3 of
+// the License, or (at your option) any later version.
+//
+// Millenium Player is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY;
+// without even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See
+// the GNU General Public License for more details.
+//
+// You should have received a copy of the GNU General Public License along with Millenium Player.
+// If not, see <https://www.gnu.org/licenses/>.
+
+@at-root {
+    $width: 120px;
+    $height: 32px;
+    $thumb-width: 10px;
+    $thumb-height: 28px;
+    $thumb-radius: 4px;
+    $volume-bg-top: 2px;
+    $volume-bg-height: $height - $volume-bg-top;
+
+    @mixin thumb {
+        appearance: none;
+        -webkit-appearance: none;
+        height: $thumb-height;
+        width: $thumb-width;
+        border-radius: $thumb-radius;
+        background-color: #fff;
+        margin-top: -4px;
+    }
+    @mixin thumb-hover {
+        filter: drop-shadow(0 0 4px #fff);
+    }
+    @mixin thumb-active {
+        filter: drop-shadow(0 0 3px #ccc);
+    }
+
+    div.volume-slider {
+        width: $width;
+        height: $height;
+        position: relative;
+        margin-left: 8px;
+    }
+
+    .volume-slider {
+        cursor: pointer;
+
+        i {
+            display: block;
+            position: absolute;
+            background-color: #aaa;
+            opacity: 50%;
+            @include mask(url("static/volume-slider.svg") 0 0 / 100% 100%);
+            top: $volume-bg-top;
+            left: 0px;
+            width: $width;
+            height: $volume-bg-height;
+            z-index: 1;
+        }
+
+        input[type="range"] {
+            appearance: none;
+            -webkit-appearance: none;
+            background: transparent;
+            position: absolute;
+            top: 2px;
+            left: 0px;
+            width: $width;
+            height: $height;
+            z-index: 2;
+        }
+
+        input[type="range"]:focus {
+            outline: none;
+        }
+        input[type="range"]::-moz-range-thumb {
+            @include thumb;
+        }
+        input[type="range"]::-webkit-slider-thumb {
+            @include thumb;
+        }
+        input[type="range"]::-moz-range-thumb:hover {
+            @include thumb-hover;
+        }
+        input[type="range"]::-webkit-slider-thumb:hover {
+            @include thumb-hover;
+        }
+        input[type="range"]::-moz-range-thumb:active {
+            @include thumb-active;
+        }
+        input[type="range"]::-webkit-slider-thumb:active {
+            @include thumb-active;
+        }
+    }
+}

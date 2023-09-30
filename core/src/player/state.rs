@@ -18,7 +18,7 @@ use crate::{
     message::PlayerMessage,
     player::{thread::PlayerThreadResources, waveform::WaveformCalculator},
 };
-use millenium_post_office::frontend::state::PlaybackStatus;
+use millenium_post_office::{frontend::state::PlaybackStatus, types::Volume};
 use std::{
     mem,
     time::{Duration, Instant},
@@ -74,6 +74,11 @@ impl CurrentState {
                 } else {
                     self
                 }
+            }
+            PlayerMessage::CommandSetVolume(volume) => {
+                log::info!("setting volume to {}", volume.as_percentage());
+                resources.device.set_volume(volume);
+                self
             }
             PlayerMessage::CommandLoadAndPlayLocation(location) => {
                 log::info!("loading and playing location: {:?}", location);
@@ -142,13 +147,14 @@ struct StatePlaying {
 }
 
 impl StatePlaying {
-    fn new(source: AudioDecoderSource) -> Self {
+    fn new(source: AudioDecoderSource, volume: Volume) -> Self {
         Self {
             source,
             status: PlaybackStatus {
                 playing: true,
                 position_secs: Duration::from_secs(0),
                 duration_secs: None,
+                volume,
             },
             last_refresh_sent: Instant::now() - Duration::from_secs(2),
         }
@@ -249,7 +255,7 @@ impl State for StateLoadLocation {
             resources
                 .broadcaster
                 .broadcast(PlayerMessage::EventStartedTrack);
-            CurrentState::Playing(StatePlaying::new(source))
+            CurrentState::Playing(StatePlaying::new(source, resources.device.volume()))
         };
         let device = &resources.device;
         device.reset_frames_consumed();

@@ -13,16 +13,14 @@
 // If not, see <https://www.gnu.org/licenses/>.
 
 use crate::component::{
-    media_controls::MediaControlButton,
-    media_controls::MediaControlPlaylistMode,
-    media_controls::{MediaControl, MediaControlButtonPausePlay},
-    media_info::MediaInfo,
-    title_bar::TitleBar,
-    waveform::Waveform,
+    media_controls::MediaControls, media_info::MediaInfo, title_bar::TitleBar, waveform::Waveform,
 };
-use millenium_post_office::frontend::state::{PlaybackStateData, PlaylistMode, WaveformStateData};
+use millenium_post_office::frontend::state::{PlaybackStateData, WaveformStateData};
+use once_cell::sync::Lazy;
 use std::{cell::RefCell, rc::Rc};
 use yew::prelude::*;
+
+static EMPTY_PLAYBACK_STATE: Lazy<PlaybackStateData> = Lazy::new(PlaybackStateData::default);
 
 pub enum RootMessage {
     UpdatePlaybackState(Rc<PlaybackStateData>),
@@ -65,11 +63,11 @@ impl Component for Root {
     }
 
     fn view(&self, _ctx: &Context<Self>) -> Html {
-        let playback_state = &self.playback_state;
-        let playing = playback_state
-            .as_ref()
-            .map(|s| s.playback_status.playing)
-            .unwrap_or_default();
+        let state = self
+            .playback_state
+            .as_deref()
+            .unwrap_or(&EMPTY_PLAYBACK_STATE);
+        let playing = state.playback_status.playing;
 
         let waveform = self
             .waveform_state
@@ -88,13 +86,9 @@ impl Component for Root {
                     <TitleBar />
                     <div style="padding:10px;">
                         {media_info}
-                        <MediaControlButton kind={MediaControl::SkipBack} />
-                        <MediaControlButton kind={MediaControl::Back} />
-                        <MediaControlButtonPausePlay playing={playing} />
-                        <MediaControlButton kind={MediaControl::Forward} />
-                        <MediaControlButton kind={MediaControl::SkipForward} />
-                        <MediaControlPlaylistMode mode={PlaylistMode::Normal} />
-                        <MediaControlButton kind={MediaControl::Menu} />
+                        <MediaControls playing={playing}
+                                       playlist_mode={state.playlist_mode}
+                                       volume={state.playback_status.volume} />
                     </div>
                 </div>
             </>

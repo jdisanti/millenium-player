@@ -18,6 +18,7 @@ use crate::{location::Location, metadata::Metadata};
 use millenium_post_office::{
     broadcast::{BroadcastMessage, Channel},
     frontend::state::PlaybackStatus,
+    types::Volume,
 };
 use std::sync::{Arc, Mutex};
 
@@ -49,6 +50,8 @@ pub enum PlayerMessage {
     CommandResume,
     /// Stop playback.
     CommandStop,
+    /// Change the playback volume.
+    CommandSetVolume(Volume),
 
     /// This is the loaded track metadata.
     EventMetadataLoaded(Metadata),
@@ -80,7 +83,8 @@ impl BroadcastMessage for PlayerMessage {
             | Self::CommandLoadAndPlayLocation(_)
             | Self::CommandPause
             | Self::CommandResume
-            | Self::CommandStop => Self::Channel::Commands,
+            | Self::CommandStop
+            | Self::CommandSetVolume(_) => Self::Channel::Commands,
 
             Self::EventMetadataLoaded(_)
             | Self::EventStartedTrack

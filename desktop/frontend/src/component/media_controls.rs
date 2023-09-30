@@ -12,8 +12,11 @@
 // You should have received a copy of the GNU General Public License along with Millenium Player.
 // If not, see <https://www.gnu.org/licenses/>.
 
-use crate::message::post_message;
-use millenium_post_office::frontend::{message::FrontendMessage, state::PlaylistMode};
+use crate::{component::volume_slider::VolumeSlider, message::post_message};
+use millenium_post_office::{
+    frontend::{message::FrontendMessage, state::PlaylistMode},
+    types::Volume,
+};
 use yew::prelude::*;
 
 #[derive(PartialEq)]
@@ -142,5 +145,28 @@ pub fn media_control_playlist_mode(props: &MediaControlPlaylistModeProps) -> Htm
     let kind = MediaControl::PlaylistMode(props.mode);
     html! {
         <MediaControlButton kind={kind} />
+    }
+}
+
+#[derive(Properties, PartialEq)]
+pub struct MediaControlsProps {
+    pub playing: bool,
+    pub playlist_mode: PlaylistMode,
+    pub volume: Volume,
+}
+
+#[function_component(MediaControls)]
+pub fn media_controls(props: &MediaControlsProps) -> Html {
+    html! {
+        <div style="display:grid;grid-template-columns:34px 34px 34px 34px 34px 34px 136px 34px;grid-template-rows:auto;">
+            <div><MediaControlButton kind={MediaControl::SkipBack} /></div>
+            <div><MediaControlButton kind={MediaControl::Back} /></div>
+            <div><MediaControlButtonPausePlay playing={props.playing} /></div>
+            <div><MediaControlButton kind={MediaControl::Forward} /></div>
+            <div><MediaControlButton kind={MediaControl::SkipForward} /></div>
+            <div><MediaControlPlaylistMode mode={props.playlist_mode} /></div>
+            <div><VolumeSlider volume={props.volume} /></div>
+            <div><MediaControlButton kind={MediaControl::Menu} /></div>
+        </div>
     }
 }

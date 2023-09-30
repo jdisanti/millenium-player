@@ -52,6 +52,7 @@ macro_rules! asset {
 asset! {
     CSS_INDEX => "index.css" / "text/css" / "The CSS file for the UI.",
     FONT_CANTARELL => "static/cantarell/Cantarell-VF.otf" / "font/otf" / "The main font for the UI.",
+    FONT_DOT_DIGITAL_7 => "static/enhanced-dot-digital-7/EnhancedDotDigital7.ttf" / "font/ttf" / "Secondary LCD-like font.",
     HTML_INDEX => "index.html" / "text/html" / "The root HTML file for the UI.",
     ICON_ALBUM => "static/material-icons/album.svg" / "image/svg+xml" / "Media control icon.",
     ICON_CIRCLE => "static/material-symbols/circle.svg" / "image/svg+xml" / "Circle icon used for the traffic light in MacOS.",
@@ -70,6 +71,7 @@ asset! {
     ICON_SKIP_NEXT => "static/material-icons/skip_next.svg" / "image/svg+xml" / "Media control icon.",
     ICON_SKIP_PREVIOUS => "static/material-icons/skip_previous.svg" / "image/svg+xml" / "Media control icon.",
     ICON_STOP => "static/material-icons/stop.svg" / "image/svg+xml" / "Media control icon.",
+    IMAGE_VOLUME_SLIDER => "static/volume-slider.svg" / "image/svg+xml" / "Volume slider background.",
     JS_INDEX => "millenium-desktop-frontend.js" / "text/javascript" / "The JavaScript entry point.",
     TXT_TEST_ASSET => "static/test_asset.txt" / "text/plain" / "Asset for unit testing.",
     WASM_INDEX => "millenium-desktop-frontend_bg.wasm" / "application/wasm" / "The JavaScript entry point.",

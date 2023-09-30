@@ -163,6 +163,9 @@ impl PlaylistManager {
                     self.playlist_mode = mode;
                     // TODO: Communicate back to the UI that the playlist has changed
                 }
+                FrontendMessage::MediaControlVolume { volume } => self
+                    .player_sub
+                    .broadcast(PlayerMessage::CommandSetVolume(volume)),
                 _ => {}
             }
         }
@@ -462,6 +465,7 @@ mod playlist_manager_tests {
             playing: true,
             position_secs: Duration::from_secs(7),
             duration_secs: Some(Duration::from_secs(60)),
+            volume: Default::default(),
         }));
         manager.update();
 
@@ -481,6 +485,7 @@ mod playlist_manager_tests {
             playing: true,
             position_secs: Duration::from_secs(1),
             duration_secs: Some(Duration::from_secs(60)),
+            volume: Default::default(),
         }));
         manager.update();
         ui_sub.broadcast(FrontendMessage::MediaControlSkipBack);

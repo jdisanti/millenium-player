@@ -25,14 +25,15 @@ use cpal::{
     PlayStreamError, Sample, SampleFormat, SizedSample, Stream, StreamError, SupportedStreamConfig,
     SupportedStreamConfigRange, SupportedStreamConfigsError,
 };
-use millenium_post_office::broadcast::{
-    BroadcastMessage, BroadcastSubscription, Broadcaster, Channel,
+use millenium_post_office::{
+    broadcast::{BroadcastMessage, BroadcastSubscription, Broadcaster, Channel},
+    types::Volume,
 };
 use std::{
     cmp::Ordering,
     fmt,
     sync::{
-        atomic::{self, AtomicBool, AtomicU64},
+        atomic::{self, AtomicBool, AtomicU64, AtomicU8},
         Arc, Mutex,
     },
     time::{Duration, Instant},
@@ -154,6 +155,12 @@ pub trait AudioDevice: BroadcastingAudioDevice {
 
     /// Pauses playback on the device.
     fn pause(&self) -> Result<(), AudioDeviceError>;
+
+    /// Set the output volume on this device.
+    fn set_volume(&self, volume: Volume);
+
+    /// Returns the current output volume.
+    fn volume(&self) -> Volume;
 
     /// Subscribe to this device's events.
     fn subscribe(
@@ -278,6 +285,12 @@ impl AudioDevice for NullAudioDevice {
         Ok(())
     }
 
+    fn set_volume(&self, _volume: Volume) {}
+
+    fn volume(&self) -> Volume {
+        Volume::default()
+    }
+
     fn subscribe(
         &self,
         name: &'static str,
@@ -294,6 +307,7 @@ struct StreamBuilder<'a> {
     output_buffer: Option<Arc<Mutex<BoxAudioBuffer>>>,
     device: Option<&'a Device>,
     broadcaster: Option<Broadcaster<AudioDeviceMessage>>,
+    volume: Option<Arc<AtomicU8>>,
 }
 
 impl<'a> StreamBuilder<'a> {
@@ -326,7 +340,16 @@ impl<'a> StreamBuilder<'a> {
         self
     }
 
-    fn output_stream<S: Sample + SizedSample + 'static>(&self) -> Result<Stream, BuildStreamError> {
+    fn volume(mut self, volume: Arc<AtomicU8>) -> Self {
+        self.volume = Some(volume);
+        self
+    }
+
+    fn output_stream<S>(&self) -> Result<Stream, BuildStreamError>
+    where
+        S: Sample + SizedSample + 'static,
+        S::Float: From<f32>,
+    {
         let config = self.config.expect("config required");
         let frames_consumed = self
             .frames_consumed
@@ -353,6 +376,7 @@ impl<'a> StreamBuilder<'a> {
             desired_output_buffer_size,
             broadcaster: broadcaster.clone(),
             frames_consumed,
+            volume: self.volume.clone().expect("volume is required"),
             state: DeviceState::Idle,
         };
         let write_data = {
@@ -399,6 +423,7 @@ struct CpalAudioDevice {
     // Information about the current state of playback
     frames_consumed: Arc<AtomicU64>,
     playing: AtomicBool,
+    volume: Arc<AtomicU8>,
 
     // Audio data and message passing
     output_buffer: Arc<Mutex<BoxAudioBuffer>>,
@@ -425,12 +450,14 @@ impl CpalAudioDevice {
         let output_buffer = Arc::new(Mutex::new(BoxAudioBuffer::empty(config.sample_format())));
 
         let broadcaster = Broadcaster::new();
+        let volume = Arc::new(AtomicU8::new(Volume::default().into()));
         let stream = StreamBuilder::new()
             .config(&config)
             .device(&device)
             .broadcaster(broadcaster.clone())
             .frames_consumed(frames_consumed.clone())
             .output_buffer(output_buffer.clone())
+            .volume(volume.clone())
             .build()?;
 
         stream.pause()?;
@@ -442,6 +469,7 @@ impl CpalAudioDevice {
 
             frames_consumed,
             playing: AtomicBool::new(false),
+            volume,
 
             output_buffer,
             broadcaster,
@@ -502,6 +530,14 @@ impl AudioDevice for CpalAudioDevice {
         Ok(())
     }
 
+    fn set_volume(&self, volume: Volume) {
+        self.volume.store(volume.into(), atomic::Ordering::Relaxed);
+    }
+
+    fn volume(&self) -> Volume {
+        self.volume.load(atomic::Ordering::Relaxed).into()
+    }
+
     fn subscribe(
         &self,
         name: &'static str,
@@ -523,6 +559,7 @@ struct WriteAudioDataContext {
     desired_output_buffer_size: usize,
     broadcaster: Broadcaster<AudioDeviceMessage>,
     frames_consumed: Arc<AtomicU64>,
+    volume: Arc<AtomicU8>,
     state: DeviceState,
 }
 
@@ -532,12 +569,14 @@ fn write_audio_data<S>(
         desired_output_buffer_size,
         broadcaster,
         frames_consumed,
+        volume,
         state,
     }: &mut WriteAudioDataContext,
     box_output_buffer: &mut BoxAudioBuffer,
     data: &mut [S],
 ) where
     S: Sample + 'static,
+    S::Float: From<f32>,
 {
     let output_buffer = box_output_buffer.expect_mut::<S>();
     if output_buffer.len() < *desired_output_buffer_size {
@@ -549,9 +588,12 @@ fn write_audio_data<S>(
         len_to_consume as u64 / *channels as u64,
         atomic::Ordering::SeqCst,
     );
+    let volume: <S as Sample>::Float = Volume::from(volume.load(atomic::Ordering::Relaxed))
+        .as_percentage()
+        .into();
     let source = output_buffer.drain(0..len_to_consume);
     for (from, into) in source.zip(data.iter_mut()) {
-        *into = from;
+        *into = from.mul_amp(volume);
     }
     let mut filled_in_silence = false;
     for into in data.iter_mut().skip(len_to_consume) {
@@ -867,6 +909,7 @@ mod tests {
             desired_output_buffer_size: 1000,
             broadcaster: broadcaster.clone(),
             frames_consumed,
+            volume: Arc::new(AtomicU8::new(Volume::default().into())),
             state: DeviceState::Playing,
         };
 
@@ -893,6 +936,46 @@ mod tests {
     }
 
     #[test]
+    fn write_audio_data_copy_data_apply_volume() {
+        let mut output_buffer =
+            BoxAudioBuffer::new(SampleFormat::F32, AudioBuffer::new(vec![128f32; 2000]));
+        let frames_consumed = Arc::new(AtomicU64::new(0));
+        let broadcaster = Broadcaster::new();
+        let test_sub = broadcaster.subscribe("test", AudioDeviceMessageChannel::All);
+
+        let mut output = vec![0f32; 1000];
+        let mut context = WriteAudioDataContext {
+            channels: 1,
+            desired_output_buffer_size: 1000,
+            broadcaster: broadcaster.clone(),
+            frames_consumed,
+            volume: Arc::new(AtomicU8::new(Volume::from_percentage(0.5).into())),
+            state: DeviceState::Playing,
+        };
+
+        write_audio_data(&mut context, &mut output_buffer, &mut output);
+
+        assert_eq!(
+            1000,
+            output_buffer.get_mut::<f32>().unwrap().len(),
+            "it should drain 1000 samples from the output buffer"
+        );
+        assert!(
+            output.iter().all(|&s| s.round() == 64.0),
+            "it should have copied the samples into the output at half volume"
+        );
+        assert_eq!(
+            DeviceState::Playing,
+            context.state,
+            "it should remain in the playing state"
+        );
+        assert!(
+            test_sub.try_recv().is_none(),
+            "it should not broadcast any message"
+        );
+    }
+
+    #[test]
     fn write_audio_data_request_more_audio() {
         let mut output_buffer =
             BoxAudioBuffer::new(SampleFormat::F32, AudioBuffer::new(vec![128f32; 2000]));
@@ -906,6 +989,7 @@ mod tests {
             desired_output_buffer_size: 3000,
             broadcaster: broadcaster.clone(),
             frames_consumed,
+            volume: Arc::new(AtomicU8::new(Volume::default().into())),
             state: DeviceState::Playing,
         };
 
@@ -948,6 +1032,7 @@ mod tests {
             desired_output_buffer_size: 3000,
             broadcaster: broadcaster.clone(),
             frames_consumed,
+            volume: Arc::new(AtomicU8::new(Volume::default().into())),
             state: DeviceState::Playing,
         };
 
@@ -1000,6 +1085,7 @@ mod tests {
             desired_output_buffer_size: 3000,
             broadcaster: broadcaster.clone(),
             frames_consumed,
+            volume: Arc::new(AtomicU8::new(Volume::default().into())),
             state: DeviceState::SilenceSince(Instant::now() - Duration::from_secs(10)),
         };
 
@@ -1043,6 +1129,7 @@ mod tests {
             desired_output_buffer_size: 3000,
             broadcaster: broadcaster.clone(),
             frames_consumed,
+            volume: Arc::new(AtomicU8::new(Volume::default().into())),
             state: DeviceState::Idle,
         };
 

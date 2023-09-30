@@ -31,7 +31,7 @@ pub fn media_info(props: &MediaInfoProps) -> Html {
         let album = track.album.as_deref().unwrap_or("Unknown album");
         let position = if let Some(duration_secs) = props.state.playback_status.duration_secs {
             html! {
-                <p>
+                <p style="font-family:'EnhancedDotDigital7';">
                     <Duration duration={props.state.playback_status.position_secs} />
                     {" / "}
                     <Duration duration={duration_secs} />
