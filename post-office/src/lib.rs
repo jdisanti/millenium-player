@@ -25,3 +25,6 @@ pub mod frontend;
 /// State types.
 #[cfg(feature = "broadcast")]
 pub mod state;
+
+/// Common types used across multiple sets of messages.
+pub mod types;

@@ -13,7 +13,10 @@
 // If not, see <https://www.gnu.org/licenses/>.
 
 use crate::{component::volume_slider::VolumeSlider, message::post_message};
-use millenium_post_office::frontend::{message::FrontendMessage, state::PlaylistMode};
+use millenium_post_office::{
+    frontend::{message::FrontendMessage, state::PlaylistMode},
+    types::Volume,
+};
 use yew::prelude::*;
 
 #[derive(PartialEq)]
@@ -149,6 +152,7 @@ pub fn media_control_playlist_mode(props: &MediaControlPlaylistModeProps) -> Htm
 pub struct MediaControlsProps {
     pub playing: bool,
     pub playlist_mode: PlaylistMode,
+    pub volume: Volume,
 }
 
 #[function_component(MediaControls)]
@@ -161,7 +165,7 @@ pub fn media_controls(props: &MediaControlsProps) -> Html {
             <div><MediaControlButton kind={MediaControl::Forward} /></div>
             <div><MediaControlButton kind={MediaControl::SkipForward} /></div>
             <div><MediaControlPlaylistMode mode={props.playlist_mode} /></div>
-            <div><VolumeSlider volume={80} /></div>
+            <div><VolumeSlider volume={props.volume} /></div>
             <div><MediaControlButton kind={MediaControl::Menu} /></div>
         </div>
     }

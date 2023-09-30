@@ -2243,6 +2243,7 @@ dependencies = [
  "gloo 0.10.0",
  "js-sys",
  "millenium-post-office",
+ "once_cell",
  "serde-wasm-bindgen",
  "serde_json",
  "wasm-bindgen",

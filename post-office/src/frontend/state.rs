@@ -15,6 +15,7 @@
 use std::time::Duration;
 
 pub use crate::frontend::message::PlaylistMode;
+use crate::types::Volume;
 
 #[cfg(feature = "broadcast")]
 pub type PlaybackState = crate::state::State<PlaybackStateData>;
@@ -66,6 +67,7 @@ pub struct PlaybackStatus {
     pub playing: bool,
     pub position_secs: Duration,
     pub duration_secs: Option<Duration>,
+    pub volume: Volume,
 }
 
 #[derive(Debug, Default, PartialEq)]

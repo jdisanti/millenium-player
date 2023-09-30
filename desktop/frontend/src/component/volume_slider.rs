@@ -12,19 +12,36 @@
 // You should have received a copy of the GNU General Public License along with Millenium Player.
 // If not, see <https://www.gnu.org/licenses/>.
 
+use crate::message::post_message;
+use millenium_post_office::{frontend::message::FrontendMessage, types::Volume};
+use wasm_bindgen::JsCast;
+use web_sys::HtmlInputElement;
 use yew::prelude::*;
 
 #[derive(Properties, PartialEq)]
 pub struct VolumeSliderProps {
-    pub volume: u8,
+    pub volume: Volume,
 }
 
 #[function_component(VolumeSlider)]
 pub fn volume_slider(props: &VolumeSliderProps) -> Html {
+    let oninput = |event: InputEvent| {
+        let target = event.target().expect("event will have a target");
+        let input = target
+            .dyn_into::<HtmlInputElement>()
+            .expect("target is an HtmlInputElement");
+        if let Ok(volume) = input.value().parse::<u8>() {
+            post_message(&FrontendMessage::MediaControlVolume {
+                volume: Volume::new(volume),
+            });
+        }
+    };
+    let min = u8::from(Volume::min()).to_string();
+    let max = u8::from(Volume::max()).to_string();
     html! {
         <div class="volume-slider">
             <i></i>
-            <input type="range" min="0" max="100" value={props.volume.to_string()} />
+            <input type="range" step="1" min={min} max={max} value={u8::from(props.volume).to_string()} oninput={oninput} />
         </div>
     }
 }
