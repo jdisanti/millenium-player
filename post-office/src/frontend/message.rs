@@ -12,9 +12,8 @@
 // You should have received a copy of the GNU General Public License along with Millenium Player.
 // If not, see <https://www.gnu.org/licenses/>.
 
-use std::borrow::Cow;
-
 use crate::types::Volume;
+use std::{borrow::Cow, time::Duration};
 
 #[derive(Clone, Debug)]
 #[cfg_attr(feature = "serialize", derive(serde::Serialize))]
@@ -38,7 +37,7 @@ pub enum FrontendMessage {
     MediaControlPause,
     MediaControlPlay,
     MediaControlSeek {
-        position: usize,
+        position: Duration,
     },
     MediaControlSkipBack,
     MediaControlSkipForward,

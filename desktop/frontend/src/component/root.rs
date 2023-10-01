@@ -13,7 +13,8 @@
 // If not, see <https://www.gnu.org/licenses/>.
 
 use crate::component::{
-    media_controls::MediaControls, media_info::MediaInfo, title_bar::TitleBar, waveform::Waveform,
+    media_controls::MediaControls, media_info::MediaInfo, time_slider::TimeSlider,
+    title_bar::TitleBar, waveform::Waveform,
 };
 use millenium_post_office::frontend::state::{PlaybackStateData, WaveformStateData};
 use once_cell::sync::Lazy;
@@ -86,6 +87,8 @@ impl Component for Root {
                     <TitleBar />
                     <div style="padding:10px;">
                         {media_info}
+                        <TimeSlider current_position={state.playback_status.current_position}
+                                    end_position={state.playback_status.end_position} />
                         <MediaControls playing={playing}
                                        playlist_mode={state.playlist_mode}
                                        volume={state.playback_status.volume} />

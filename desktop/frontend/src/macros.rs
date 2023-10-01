@@ -12,28 +12,25 @@
 // You should have received a copy of the GNU General Public License along with Millenium Player.
 // If not, see <https://www.gnu.org/licenses/>.
 
-use millenium_post_office::frontend::state::PlaybackStateData;
-use std::rc::Rc;
-use yew::prelude::*;
+/// Macro for extracting the target value from an [`Event`](web_sys::Event) or [`InputEvent`](web_sys::InputEvent).
+///
+/// Equivalent to the following Typescript:
+/// ```typescript
+/// (event: Event) => {
+///     return event.target.value;
+/// }
+/// ```
+#[macro_export]
+macro_rules! input_value {
+    ($event:expr) => {{
+        use wasm_bindgen::JsCast;
+        use web_sys::HtmlInputElement;
 
-#[derive(Properties, PartialEq)]
-pub struct MediaInfoProps {
-    pub state: Rc<PlaybackStateData>,
-}
-
-#[function_component(MediaInfo)]
-pub fn media_info(props: &MediaInfoProps) -> Html {
-    if let Some(track) = props.state.current_track.as_ref() {
-        let artist = track.artist.as_deref().unwrap_or("Unknown artist");
-        let title = track.title.as_deref().unwrap_or("Untitled");
-        let album = track.album.as_deref().unwrap_or("Unknown album");
-        html! {
-            <>
-                <p>{artist}{" - "}{title}</p>
-                <p>{album}</p>
-            </>
-        }
-    } else {
-        html!()
-    }
+        let event = $event;
+        let target = event.target().expect("event will have a target");
+        let input = target
+            .dyn_into::<HtmlInputElement>()
+            .expect("target is an HtmlInputElement");
+        input.value()
+    }};
 }

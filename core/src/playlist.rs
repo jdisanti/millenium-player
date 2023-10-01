@@ -173,7 +173,7 @@ impl PlaylistManager {
 
     fn part_way_into_track(&self) -> bool {
         self.playback_status
-            .map(|status| status.position_secs >= Duration::from_secs(7))
+            .map(|status| status.current_position >= Duration::from_secs(7))
             .unwrap_or(false)
     }
 
@@ -463,8 +463,8 @@ mod playlist_manager_tests {
 
         player_sub.broadcast(PlayerMessage::UpdatePlaybackStatus(PlaybackStatus {
             playing: true,
-            position_secs: Duration::from_secs(7),
-            duration_secs: Some(Duration::from_secs(60)),
+            current_position: Duration::from_secs(7),
+            end_position: Some(Duration::from_secs(60)),
             volume: Default::default(),
         }));
         manager.update();
@@ -483,8 +483,8 @@ mod playlist_manager_tests {
         // Now skipping back should go off the end of the playlist
         player_sub.broadcast(PlayerMessage::UpdatePlaybackStatus(PlaybackStatus {
             playing: true,
-            position_secs: Duration::from_secs(1),
-            duration_secs: Some(Duration::from_secs(60)),
+            current_position: Duration::from_secs(1),
+            end_position: Some(Duration::from_secs(60)),
             volume: Default::default(),
         }));
         manager.update();

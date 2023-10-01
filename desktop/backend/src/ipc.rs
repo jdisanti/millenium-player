@@ -178,8 +178,8 @@ mod tests {
                 artist: Some("test-artist".into()),
                 album: Some("test-album".into()),
             });
-            state.playback_status.duration_secs = Some(Duration::from_secs(123));
-            state.playback_status.position_secs = Duration::from_secs(12);
+            state.playback_status.end_position = Some(Duration::from_secs(123));
+            state.playback_status.current_position = Duration::from_secs(12);
         });
 
         let request = Request::builder()

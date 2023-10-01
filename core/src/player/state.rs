@@ -152,8 +152,8 @@ impl StatePlaying {
             source,
             status: PlaybackStatus {
                 playing: true,
-                position_secs: Duration::from_secs(0),
-                duration_secs: None,
+                current_position: Duration::from_secs(0),
+                end_position: None,
                 volume,
             },
             last_refresh_sent: Instant::now() - Duration::from_secs(2),
@@ -196,11 +196,12 @@ impl State for StatePlaying {
                     resources.device.frames_consumed() as f64,
                     resources.device.playback_sample_rate() as f64,
                 );
-                self.status.position_secs = Duration::from_secs_f64(frames_consumed / sample_rate);
+                self.status.current_position =
+                    Duration::from_secs_f64(frames_consumed / sample_rate);
 
                 let frame_count = self.source.frame_count();
-                if self.status.duration_secs.is_none() && frame_count.is_some() {
-                    self.status.duration_secs =
+                if self.status.end_position.is_none() && frame_count.is_some() {
+                    self.status.end_position =
                         frame_count.map(|fc| Duration::from_secs_f64(fc as f64 / sample_rate));
                 }
 

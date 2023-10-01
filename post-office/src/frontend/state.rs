@@ -12,10 +12,10 @@
 // You should have received a copy of the GNU General Public License along with Millenium Player.
 // If not, see <https://www.gnu.org/licenses/>.
 
+use crate::types::Volume;
 use std::time::Duration;
 
 pub use crate::frontend::message::PlaylistMode;
-use crate::types::Volume;
 
 #[cfg(feature = "broadcast")]
 pub type PlaybackState = crate::state::State<PlaybackStateData>;
@@ -65,8 +65,10 @@ impl Track {
 #[cfg_attr(feature = "deserialize", derive(serde::Deserialize))]
 pub struct PlaybackStatus {
     pub playing: bool,
-    pub position_secs: Duration,
-    pub duration_secs: Option<Duration>,
+    /// Current position in the audio track.
+    pub current_position: Duration,
+    /// End position in the audio track (length of the track). If `None`, then we are streaming audio.
+    pub end_position: Option<Duration>,
     pub volume: Volume,
 }
 
