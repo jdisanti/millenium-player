@@ -20,7 +20,10 @@ use millenium_post_office::{
     frontend::state::PlaybackStatus,
     types::Volume,
 };
-use std::sync::{Arc, Mutex};
+use std::{
+    sync::{Arc, Mutex},
+    time::Duration,
+};
 
 bitflags::bitflags! {
     #[derive(Copy, Clone, Debug, Eq, PartialEq)]
@@ -50,6 +53,8 @@ pub enum PlayerMessage {
     CommandResume,
     /// Stop playback.
     CommandStop,
+    /// Seek to a position in the currently playing track.
+    CommandSeek(Duration),
     /// Change the playback volume.
     CommandSetVolume(Volume),
 
@@ -84,6 +89,7 @@ impl BroadcastMessage for PlayerMessage {
             | Self::CommandPause
             | Self::CommandResume
             | Self::CommandStop
+            | Self::CommandSeek(_)
             | Self::CommandSetVolume(_) => Self::Channel::Commands,
 
             Self::EventMetadataLoaded(_)
@@ -115,6 +121,8 @@ impl PartialEq for PlayerMessage {
             (CommandPause, CommandPause) => true,
             (CommandResume, CommandResume) => true,
             (CommandStop, CommandStop) => true,
+            (CommandSeek(a), CommandSeek(b)) => a == b,
+            (CommandSetVolume(a), CommandSetVolume(b)) => a == b,
 
             (EventMetadataLoaded(l), EventMetadataLoaded(r)) => l == r,
             (EventStartedTrack, EventStartedTrack) => true,

@@ -24,11 +24,14 @@ use millenium_post_office::{
 use std::rc::Rc;
 use yew::{platform::spawn_local, AppHandle};
 
+#[macro_use]
+mod macros;
 mod component {
     pub mod duration;
     pub mod media_controls;
     pub mod media_info;
     pub mod root;
+    pub mod time_slider;
     pub mod title_bar;
     pub mod volume_slider;
     pub mod waveform;

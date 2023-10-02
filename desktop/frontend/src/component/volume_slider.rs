@@ -14,8 +14,6 @@
 
 use crate::message::post_message;
 use millenium_post_office::{frontend::message::FrontendMessage, types::Volume};
-use wasm_bindgen::JsCast;
-use web_sys::HtmlInputElement;
 use yew::prelude::*;
 
 #[derive(Properties, PartialEq)]
@@ -26,11 +24,8 @@ pub struct VolumeSliderProps {
 #[function_component(VolumeSlider)]
 pub fn volume_slider(props: &VolumeSliderProps) -> Html {
     let oninput = |event: InputEvent| {
-        let target = event.target().expect("event will have a target");
-        let input = target
-            .dyn_into::<HtmlInputElement>()
-            .expect("target is an HtmlInputElement");
-        if let Ok(volume) = input.value().parse::<u8>() {
+        let value = input_value!(event);
+        if let Ok(volume) = value.parse::<u8>() {
             post_message(&FrontendMessage::MediaControlVolume {
                 volume: Volume::new(volume),
             });

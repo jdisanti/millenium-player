@@ -53,7 +53,9 @@ body {
 }
 
 @import "media-controls";
-@import "title-bar";
 @import "theme-default";
-@import "simple-mode";
+@import "time-slider";
+@import "title-bar";
 @import "volume-slider";
+
+@import "simple-mode";

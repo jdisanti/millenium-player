@@ -19,16 +19,17 @@ use crate::{
 };
 use camino::Utf8PathBuf;
 use rubato::ResampleResult;
-use std::fs::File;
 use std::{cmp::Ordering, error::Error as StdError};
+use std::{fs::File, time::Duration};
 use symphonia::core::{
     audio::{AudioBuffer, AudioBufferRef, Signal},
     codecs::{Decoder, DecoderOptions},
     conv::{FromSample, IntoSample},
-    formats::{FormatReader, Track},
+    formats::{FormatReader, SeekMode, SeekTo, Track},
     io::MediaSourceStream,
     probe::Hint,
     sample::Sample,
+    units::Time,
 };
 
 #[derive(Debug, thiserror::Error)]
@@ -353,6 +354,22 @@ impl AudioDecoderSource {
     /// The number of frames this stream contains, if available.
     pub fn frame_count(&self) -> Option<u64> {
         self.frame_count
+    }
+
+    /// Seek to the given position in the audio source.
+    pub fn seek(&mut self, position: Duration) -> Result<(), AudioSourceError> {
+        self.reader
+            .seek(
+                SeekMode::Coarse,
+                SeekTo::Time {
+                    time: Time::new(position.as_secs(), 0.0),
+                    track_id: Some(self.selected_track_id),
+                },
+            )
+            .map_err(|err| AudioSourceError::FailedToReadStream {
+                source: Box::new(err),
+            })?;
+        Ok(())
     }
 
     /// Retrieve and decode the next chunk of audio data.
