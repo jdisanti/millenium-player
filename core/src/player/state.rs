@@ -75,6 +75,25 @@ impl CurrentState {
                     self
                 }
             }
+            PlayerMessage::CommandSeek(position) => {
+                if let CurrentState::Playing(mut state) = self {
+                    log::info!("seeking to {}s", position.as_secs());
+                    resources.device.stop().unwrap();
+                    if let Err(err) = state.source.seek(position) {
+                        log::error!("failed to seek: {}", err);
+                        resources
+                            .broadcaster
+                            .broadcast(PlayerMessage::EventFailedToDecodeAudio(err.into()));
+                        CurrentState::DoNothing
+                    } else {
+                        resources.device.play().unwrap();
+                        CurrentState::Playing(state)
+                    }
+                } else {
+                    log::info!("ignoring command to seek since we're not playing anything");
+                    self
+                }
+            }
             PlayerMessage::CommandSetVolume(volume) => {
                 log::info!("setting volume to {}", volume.as_percentage());
                 resources.device.set_volume(volume);

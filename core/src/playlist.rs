@@ -149,20 +149,25 @@ impl PlaylistManager {
                         .collect(),
                 ),
                 FrontendMessage::MediaControlSkipBack => self.control_skip_back(),
-                FrontendMessage::MediaControlBack => log::error!("back not implemented"),
+                FrontendMessage::MediaControlBack => log::error!("TODO: back not implemented"),
                 FrontendMessage::MediaControlPause => {
                     self.player_sub.broadcast(PlayerMessage::CommandPause)
                 }
                 FrontendMessage::MediaControlPlay => {
                     self.player_sub.broadcast(PlayerMessage::CommandResume)
                 }
-                FrontendMessage::MediaControlStop => log::error!("stop not implemented"),
-                FrontendMessage::MediaControlForward => log::error!("forward not implemented"),
+                FrontendMessage::MediaControlStop => log::error!("TODO: stop not implemented"),
+                FrontendMessage::MediaControlForward => {
+                    log::error!("TODO: forward not implemented")
+                }
                 FrontendMessage::MediaControlSkipForward => self.start_next_track(true),
                 FrontendMessage::MediaControlPlaylistMode { mode } => {
                     self.playlist_mode = mode;
                     // TODO: Communicate back to the UI that the playlist has changed
                 }
+                FrontendMessage::MediaControlSeek { position } => self
+                    .player_sub
+                    .broadcast(PlayerMessage::CommandSeek(position)),
                 FrontendMessage::MediaControlVolume { volume } => self
                     .player_sub
                     .broadcast(PlayerMessage::CommandSetVolume(volume)),
