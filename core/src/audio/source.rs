@@ -75,15 +75,35 @@ pub trait Resampler {
     /// Resample the given channels into a new set of channels.
     ///
     /// The destination frequency is determined by the resampler's configuration.
-    fn resample(&mut self, channels: &[Vec<f32>]) -> ResampleResult<Vec<Vec<f32>>>;
+    fn resample(&mut self, channels: &[Vec<f32>], output: &mut Vec<Vec<f32>>)
+        -> ResampleResult<()>;
 }
 
 impl<R> Resampler for R
 where
     R: rubato::Resampler<f32>,
 {
-    fn resample(&mut self, channels: &[Vec<f32>]) -> ResampleResult<Vec<Vec<f32>>> {
-        self.process(channels, None)
+    fn resample(
+        &mut self,
+        channels: &[Vec<f32>],
+        output: &mut Vec<Vec<f32>>,
+    ) -> ResampleResult<()> {
+        debug_assert!(!channels.is_empty());
+
+        let required_buffer_size = self.output_frames_max();
+        if output.len() < channels.len() {
+            output.resize_with(channels.len(), Vec::new);
+        }
+        for buffer in output.iter_mut() {
+            if buffer.len() != required_buffer_size {
+                buffer.resize(required_buffer_size, 0.0);
+            }
+        }
+
+        let (_in_frames, _out_frames) = self.process_into_buffer(channels, output, None)?;
+        debug_assert_eq!(_in_frames, channels[0].len());
+        debug_assert_eq!(_out_frames, output[0].len());
+        Ok(())
     }
 }
 
@@ -97,6 +117,11 @@ where
 pub struct SourceBuffer {
     sample_rate: SampleRate,
     channels: Vec<Vec<f32>>,
+    /// This channel count won't always match the length of `channels`, but it should
+    /// be taken as the source of truth over the length of `channels`. This is required
+    /// since the same buffer will be reused several times for remixing in place, and we
+    /// don't want to reallocate a channel every time this happens.
+    channel_count: usize,
 }
 impl SourceBuffer {
     /// Creates an empty source buffer.
@@ -104,6 +129,7 @@ impl SourceBuffer {
         Self {
             sample_rate,
             channels: vec![Vec::new(); channels as usize],
+            channel_count: channels as usize,
         }
     }
 
@@ -114,8 +140,17 @@ impl SourceBuffer {
         }
     }
 
+    /// Make the buffer empty with the given number of channels.
+    pub fn make_empty_with_channels(&mut self, channels: ChannelCount) {
+        self.channel_count = channels as usize;
+        if self.channels.len() < self.channel_count {
+            self.channels.resize_with(self.channel_count, Vec::new);
+        }
+        self.clear();
+    }
+
     /// Extend this buffer with another buffer's data.
-    pub fn extend(&mut self, other: SourceBuffer) {
+    pub fn extend(&mut self, other: &SourceBuffer) {
         debug_assert!(other.sample_rate() == self.sample_rate);
         debug_assert!(other.channel_count() == self.channel_count());
         for (into, from) in self.channels.iter_mut().zip(other.channels.iter()) {
@@ -131,16 +166,19 @@ impl SourceBuffer {
         }
     }
 
-    /// Drain the first N frames from the buffer and return them as a new buffer.
-    pub fn drain(&mut self, n: usize) -> SourceBuffer {
+    /// Drain the first N frames from the buffer and add them to the given buffer.
+    pub fn drain_into(&mut self, n: usize, output: &mut SourceBuffer) {
         debug_assert!(self.frame_count() >= n);
-        Self {
-            sample_rate: self.sample_rate,
-            channels: self
-                .channels
-                .iter_mut()
-                .map(|channel| channel.drain(0..n).collect())
-                .collect(),
+        output.sample_rate = self.sample_rate;
+        output.channel_count = self.channel_count;
+        if output.channels.len() < self.channel_count {
+            output.channels.resize_with(self.channel_count, Vec::new);
+        }
+        for (output_channel, input_channel) in
+            output.channels.iter_mut().zip(self.channels.iter_mut())
+        {
+            output_channel.clear();
+            output_channel.extend(input_channel.drain(0..n));
         }
     }
 
@@ -155,8 +193,9 @@ impl SourceBuffer {
     }
 
     /// The number of channels in the source buffer.
+    #[inline]
     pub fn channel_count(&self) -> ChannelCount {
-        self.channels.len() as ChannelCount
+        self.channel_count as ChannelCount
     }
 
     /// Raw samples for the given channel.
@@ -166,36 +205,67 @@ impl SourceBuffer {
         self.channels[channel].as_slice()
     }
 
-    /// Resamples this buffer into a new buffer with the given resampler.
-    pub fn resampled(&self, new_sample_rate: SampleRate, resampler: &mut dyn Resampler) -> Self {
-        Self {
-            sample_rate: new_sample_rate,
-            channels: resampler
-                .resample(&self.channels)
-                .expect("failed to resample (this is a bug)"),
+    /// Resamples this buffer into the given buffer with the given resampler.
+    pub fn resample_into(
+        &self,
+        into: &mut SourceBuffer,
+        new_sample_rate: SampleRate,
+        resampler: &mut dyn Resampler,
+    ) {
+        debug_assert!(self.channel_count <= self.channels.len());
+
+        into.sample_rate = new_sample_rate;
+        into.make_empty_with_channels(self.channel_count());
+
+        resampler
+            .resample(&self.channels[0..self.channel_count], &mut into.channels)
+            .expect("failed to resample (this is a bug)");
+    }
+
+    /// Copies into the given buffer, resizing and allocating as needed.
+    pub fn copy_into(&self, into: &mut SourceBuffer) {
+        into.sample_rate = self.sample_rate;
+        if self.channel_count > 0 {
+            into.channels.resize_with(self.channel_count, Vec::new);
+            for (into_channel, from_channel) in into.channels.iter_mut().zip(self.channels.iter()) {
+                into_channel.resize(from_channel.len(), 0.0);
+                into_channel.copy_from_slice(from_channel);
+            }
+        } else {
+            into.channels.clear();
         }
     }
 
     /// Remixes into a different arrangement of channels in place.
-    pub fn remix(self, new_channels: ChannelCount) -> Self {
+    pub fn remix_in_place(&mut self, new_channels: ChannelCount) {
         match self.channel_count().cmp(&new_channels) {
-            Ordering::Equal => self,
-            Ordering::Less => self.up_mix(new_channels),
-            Ordering::Greater => self.down_mix(new_channels),
+            Ordering::Equal => {}
+            Ordering::Less => self.up_mix_in_place(new_channels),
+            Ordering::Greater => self.down_mix_in_place(new_channels),
         }
     }
 
-    fn up_mix(self, new_channels: ChannelCount) -> Self {
+    fn up_mix_in_place(&mut self, new_channels: ChannelCount) {
         // Mono to stereo
         if self.channel_count() == 1 && new_channels == 2 {
             // 10^(dB/20) with dB=-3
             let gain = 0.707_945_76;
-            let mut attenuated = self.channels.into_iter().next().unwrap();
-            attenuated.iter_mut().for_each(|s| *s *= gain);
-            return Self {
-                sample_rate: self.sample_rate,
-                channels: vec![attenuated.clone(), attenuated],
-            };
+
+            let frame_count = self.channels[0].len();
+            if self.channels.len() < 2 {
+                self.channels.resize_with(2, Vec::new);
+            }
+            self.channels[1].resize(frame_count, 0.0);
+            self.channel_count = 2;
+
+            let both = &mut self.channels[0..2];
+            let (left, right) = both.split_at_mut(1);
+            let (left, right) = (&mut left[0], &mut right[0]);
+            for (l, r) in left.iter_mut().zip(right.iter_mut()) {
+                *l *= gain;
+                *r = *l;
+            }
+            return;
         }
 
         unimplemented!(
@@ -205,20 +275,20 @@ impl SourceBuffer {
         )
     }
 
-    fn down_mix(mut self, new_channels: ChannelCount) -> Self {
+    fn down_mix_in_place(&mut self, new_channels: ChannelCount) {
         // Stereo to mono
         if self.channel_count() == 2 && new_channels == 1 {
             // 10^(dB/20) with dB=3
             let gain = 1.412_537_6;
-            let mut left = self.channels.remove(0);
-            let right = self.channels.remove(0);
-            left.iter_mut()
-                .zip(right.iter())
-                .for_each(|(left, right)| *left = (*left * gain + right * gain).clamped());
-            return Self {
-                sample_rate: self.sample_rate,
-                channels: vec![left],
-            };
+
+            let both = &mut self.channels[0..2];
+            let (left, right) = both.split_at_mut(1);
+            let (left, right) = (&mut left[0], &right[0]);
+            for (l, r) in left.iter_mut().zip(right.iter()) {
+                *l = (*l * gain + *r * gain).clamped();
+            }
+            self.channel_count = 1;
+            return;
         }
 
         unimplemented!(
@@ -289,6 +359,7 @@ impl SourceBuffer {
         Self {
             sample_rate,
             channels,
+            channel_count,
         }
     }
 }

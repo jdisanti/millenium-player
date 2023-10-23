@@ -197,7 +197,10 @@ impl<const BIN_COUNT: usize> SpectrumCalculator<BIN_COUNT> {
         debug_assert!(source.channel_count() > 0);
         debug_assert_eq!(self.sample_rate, source.sample_rate());
 
-        let source_mono = source.clone().remix(1);
+        // TODO: eliminate the clone here by keeping a buffer around and reusing it
+        let mut source_mono = source.clone();
+        source_mono.remix_in_place(1);
+
         self.sample_buffer
             .extend(source_mono.channel(0).iter().copied());
         if self.sample_buffer.len() > self.required_samples {

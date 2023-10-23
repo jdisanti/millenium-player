@@ -326,7 +326,7 @@ fn queue_chunks(
                             Some(resources.device.create_sink(sample_rate, channels));
                     }
                     let sink = resources.current_sink.as_ref().unwrap();
-                    sink.queue(chunk);
+                    sink.queue(&chunk);
                 }
             }
             Ok(None) => {

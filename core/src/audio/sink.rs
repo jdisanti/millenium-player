@@ -14,23 +14,27 @@
 
 use super::{
     device::{AudioDeviceMessage, AudioDeviceMessageChannel},
-    source::{Resampler, SourceBuffer},
+    source::SourceBuffer,
     ChannelCount, SampleRate,
 };
 use cpal::{Sample, SampleFormat};
 use millenium_post_office::broadcast::{BroadcastSubscription, Broadcaster};
-use rubato::{SincFixedIn, SincInterpolationParameters, SincInterpolationType, WindowFunction};
+use rubato::{FftFixedInOut, Resampler};
 use std::{
     any::Any,
     cell::RefCell,
-    mem,
-    ops::{DerefMut, RangeBounds},
+    ops::RangeBounds,
     sync::{Arc, Mutex},
     time::Duration,
 };
 
-const CHUNK_SIZE_FRAMES: usize = 1024;
-const DESIRED_QUEUE_LENGTH: Duration = Duration::from_millis(100);
+const DESIRED_CHUNK_SIZE_FRAMES: usize = 2048;
+const DESIRED_QUEUE_LENGTH: Duration = Duration::from_millis(500);
+
+struct ResampleBuffers {
+    input: SourceBuffer,
+    output: SourceBuffer,
+}
 
 /// A sink for audio data that sends that data to the audio device.
 pub struct Sink {
@@ -39,7 +43,9 @@ pub struct Sink {
     output_sample_rate: SampleRate,
     output_channels: ChannelCount,
     desired_input_frames: usize,
-    resampler: Option<RefCell<SincFixedIn<f32>>>,
+    chunk_size_frames: usize,
+    resampler: Option<RefCell<FftFixedInOut<f32>>>,
+    resample_buffers: RefCell<ResampleBuffers>,
     input_buffer: Arc<Mutex<SourceBuffer>>,
     output_buffer: Arc<Mutex<BoxAudioBuffer>>,
     subscription: BroadcastSubscription<AudioDeviceMessage>,
@@ -55,27 +61,17 @@ impl Sink {
         output_buffer: Arc<Mutex<BoxAudioBuffer>>,
         broadcaster: Broadcaster<AudioDeviceMessage>,
     ) -> Self {
-        let resampler = if input_sample_rate != output_sample_rate {
-            Some(RefCell::new(
-                SincFixedIn::new(
-                    // Resample ratio (into / from)
-                    output_sample_rate as f64 / input_sample_rate as f64,
-                    // Max relative resample ratio
-                    12.0,
-                    SincInterpolationParameters {
-                        sinc_len: 256,
-                        f_cutoff: 0.95,
-                        interpolation: SincInterpolationType::Linear,
-                        oversampling_factor: 256,
-                        window: WindowFunction::BlackmanHarris2,
-                    },
-                    CHUNK_SIZE_FRAMES,
-                    output_channels as usize,
-                )
-                .expect("failed to create resampler (this is a bug)"),
-            ))
+        let (chunk_size_frames, resampler) = if input_sample_rate != output_sample_rate {
+            let resampler = FftFixedInOut::new(
+                input_sample_rate as usize,
+                output_sample_rate as usize,
+                DESIRED_CHUNK_SIZE_FRAMES,
+                input_channels as usize,
+            )
+            .expect("failed to create resampler (this is a bug)");
+            (resampler.input_frames_max(), Some(RefCell::new(resampler)))
         } else {
-            None
+            (DESIRED_CHUNK_SIZE_FRAMES, None)
         };
         let subscription = broadcaster.subscribe("audio-sink", AudioDeviceMessageChannel::Requests);
         Self {
@@ -85,7 +81,12 @@ impl Sink {
             output_channels,
             desired_input_frames: (DESIRED_QUEUE_LENGTH.as_secs_f32() * input_sample_rate as f32)
                 as usize,
+            chunk_size_frames,
             resampler,
+            resample_buffers: RefCell::new(ResampleBuffers {
+                input: SourceBuffer::empty(0, 0),
+                output: SourceBuffer::empty(0, 0),
+            }),
             input_buffer: Arc::new(Mutex::new(SourceBuffer::empty(
                 input_sample_rate,
                 input_channels,
@@ -110,18 +111,30 @@ impl Sink {
         self.input_buffer.lock().unwrap().frame_count() < self.desired_input_frames
     }
 
-    fn convert_chunk(
-        resampler: Option<&mut dyn Resampler>,
-        output_sample_rate: SampleRate,
-        output_channels: ChannelCount,
-        chunk: SourceBuffer,
-    ) -> SourceBuffer {
-        let chunk = chunk.remix(output_channels);
-        if let Some(resampler) = resampler {
-            chunk.resampled(output_sample_rate, resampler)
-        } else {
-            chunk
+    fn remix_and_resample_to_output(
+        &self,
+        original: &mut SourceBuffer,
+        final_output: &mut BoxAudioBuffer,
+    ) {
+        let mut resample_buffers = self.resample_buffers.borrow_mut();
+        let ResampleBuffers {
+            ref mut input,
+            ref mut output,
+        } = &mut *resample_buffers;
+
+        let resampler_borrow = self.resampler.as_ref().map(|r| r.borrow_mut());
+
+        input.make_empty_with_channels(original.channel_count());
+        original.drain_into(self.chunk_size_frames, input);
+
+        input.remix_in_place(self.output_channels);
+        let mut final_buffer = &input;
+        if let Some(mut resampler) = resampler_borrow {
+            input.resample_into(output, self.output_sample_rate, &mut *resampler);
+            final_buffer = &output;
         }
+
+        final_output.extend(final_buffer);
     }
 
     /// This is a blocking call that sends data to the audio device as needed.
@@ -129,17 +142,9 @@ impl Sink {
         if let Some(AudioDeviceMessage::RequestAudioData) = self.subscription.recv_timeout(timeout)
         {
             let mut input_buffer = self.input_buffer.lock().unwrap();
-            if input_buffer.frame_count() >= CHUNK_SIZE_FRAMES {
-                let mut resampler_borrow = self.resampler.as_ref().map(|r| r.borrow_mut());
-                let chunk = Self::convert_chunk(
-                    resampler_borrow.as_mut().map(|r| r.deref_mut() as _),
-                    self.output_sample_rate,
-                    self.output_channels,
-                    input_buffer.drain(CHUNK_SIZE_FRAMES),
-                );
-
+            if input_buffer.frame_count() >= self.chunk_size_frames {
                 let mut output_buffer = self.output_buffer.lock().unwrap();
-                output_buffer.extend(&chunk);
+                self.remix_and_resample_to_output(&mut input_buffer, &mut output_buffer);
             }
         }
     }
@@ -150,7 +155,7 @@ impl Sink {
     ///
     /// This panics if the source sample rate or channel count doesn't match
     /// the expected sample rate or channel count.
-    pub fn queue(&self, source: SourceBuffer) {
+    pub fn queue(&self, source: &SourceBuffer) {
         // The sink needs to be recreated if the sample rate or number of channels changes
         debug_assert!(source.sample_rate() == self.input_sample_rate);
         debug_assert!(source.channel_count() == self.input_channels);
@@ -165,27 +170,12 @@ impl Sink {
         if input_buffer.frame_count() == 0 {
             return;
         }
-
-        let mut chunk =
-            SourceBuffer::empty(input_buffer.sample_rate(), input_buffer.channel_count());
-        mem::swap(&mut chunk, &mut input_buffer);
-
-        if chunk.frame_count() < CHUNK_SIZE_FRAMES {
-            chunk.extend_with_silence(CHUNK_SIZE_FRAMES);
+        if input_buffer.frame_count() < self.chunk_size_frames {
+            input_buffer.extend_with_silence(self.chunk_size_frames);
         }
-        let mut resampler_borrow = self.resampler.as_ref().map(|r| r.borrow_mut());
-        let chunk = Self::convert_chunk(
-            resampler_borrow.as_mut().map(|r| r.deref_mut() as _),
-            self.output_sample_rate,
-            self.output_channels,
-            chunk,
-        );
 
         let mut output_buffer = self.output_buffer.lock().unwrap();
-        output_buffer.extend(&chunk);
-        let _ = (output_buffer, chunk);
-
-        input_buffer.clear();
+        self.remix_and_resample_to_output(&mut input_buffer, &mut output_buffer);
     }
 }
 
