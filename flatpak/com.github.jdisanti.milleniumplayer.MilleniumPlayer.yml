@@ -1,0 +1,26 @@
+app-id: com.github.jdisanti.milleniumplayer.MilleniumPlayer
+runtime: org.gnome.Platform
+runtime-version: "43"
+sdk: org.gnome.Sdk
+command: millenium-player
+modules:
+  - name: millenium-player
+    buildsystem: simple
+    sources:
+      - type: file
+        path: "../target/release/millenium-player"
+        dest-filename: "millenium-player"
+    build-commands:
+      - find /usr/include
+      - find /usr/lib | grep -v ruby
+      - install -D millenium-player /app/bin/millenium-player
+finish-args:
+  # Wayland access
+  - --socket=wayland
+  - --socket=fallback-x11
+  # PulseAudio
+  - --socket=pulseaudio
+  # GPU acceleration
+  - --device=dri
+cleanup:
+  - "/target"
