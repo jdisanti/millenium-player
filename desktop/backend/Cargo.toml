@@ -30,7 +30,7 @@ log = "0.4.20"
 millenium-core = { path = "../../core" }
 millenium-desktop-assets = { path = "../assets" }
 millenium-post-office = { path = "../../post-office", features = ["broadcast", "deserialize", "serialize"] }
-muda = "0.8.5"
+muda = { version = "0.8.5", default-features = false }
 rfd = "0.11.4"
 serde = { version = "1.0.188", features = ["derive"] }
 serde_json = "1.0.105"
