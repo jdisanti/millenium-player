@@ -12,7 +12,7 @@
 // You should have received a copy of the GNU General Public License along with Millenium Player.
 // If not, see <https://www.gnu.org/licenses/>.
 
-use crate::error;
+use crate::{error, warn};
 use gloo::utils::window;
 use js_sys::Float32Array;
 use millenium_post_office::frontend::state::WaveformStateData;
@@ -57,12 +57,19 @@ impl Component for Waveform {
                 .canvas_ref
                 .cast::<HtmlCanvasElement>()
                 .expect("failed to get canvas");
-            let gl: GL = canvas
-                .get_context("webgl")
-                .expect("failed to get webgl context")
-                .expect("no webgl context available")
-                .dyn_into()
-                .expect("failed to cast JsObject into WebGlRenderingContext");
+            let gl: GL = match canvas.get_context("webgl") {
+                Ok(Some(context)) => context
+                    .dyn_into()
+                    .expect("failed to cast JsObject into WebGlRenderContext"),
+                Ok(None) => {
+                    warn!("webview doesn't support WebGL");
+                    return;
+                }
+                Err(err) => {
+                    error!("failed to call HtmlCanvasElement::getContext: {err:?}");
+                    return;
+                }
+            };
             Self::setup_render_loop(gl, ctx.props().waveform.clone());
         }
     }
