@@ -33,12 +33,12 @@ impl InternalProtocol {
         }
     }
 
-    pub fn handle_request(&self, request: &Request<Vec<u8>>) -> http::Response<Cow<'static, [u8]>> {
-        let path = request.uri().path();
+    pub fn handle_request(&self, request: Request<Vec<u8>>) -> http::Response<Cow<'static, [u8]>> {
+        let path = request.uri().path().to_string();
         if path.starts_with("/ipc/") {
-            self.handle_ipc_request(path, request)
+            self.handle_ipc_request(&path, request)
         } else {
-            self.handle_asset_request(path)
+            self.handle_asset_request(&path)
         }
     }
 
@@ -60,7 +60,7 @@ impl InternalProtocol {
     fn handle_ipc_request(
         &self,
         path: &str,
-        request: &Request<Vec<u8>>,
+        request: Request<Vec<u8>>,
     ) -> Response<Cow<'static, [u8]>> {
         match path {
             "/ipc/playback" => self.handle_ipc_playback(request),
@@ -76,7 +76,7 @@ impl InternalProtocol {
             .expect("valid response")
     }
 
-    fn handle_ipc_playback(&self, _request: &Request<Vec<u8>>) -> Response<Cow<'static, [u8]>> {
+    fn handle_ipc_playback(&self, _request: Request<Vec<u8>>) -> Response<Cow<'static, [u8]>> {
         let state = self.playback_state.borrow();
         let body = serde_json::to_vec(&*state).expect("serializable");
         Response::builder()
@@ -86,7 +86,7 @@ impl InternalProtocol {
             .expect("valid response")
     }
 
-    fn handle_ipc_waveform(&self, _request: &Request<Vec<u8>>) -> Response<Cow<'static, [u8]>> {
+    fn handle_ipc_waveform(&self, _request: Request<Vec<u8>>) -> Response<Cow<'static, [u8]>> {
         let state = self.waveform_state.borrow();
         if let Some(waves) = &state.waveform {
             let mut body = Vec::with_capacity(2 * waves.spectrum.len() * size_of::<f32>());
@@ -125,7 +125,7 @@ mod tests {
             .method("GET")
             .body(Vec::new())
             .unwrap();
-        let response = protocol.handle_request(&request);
+        let response = protocol.handle_request(request);
         assert_eq!(404, response.status());
         assert!(response.body().is_empty());
     }
@@ -141,7 +141,7 @@ mod tests {
             .method("GET")
             .body(Vec::new())
             .unwrap();
-        let response = protocol.handle_request(&request);
+        let response = protocol.handle_request(request);
         assert_eq!(404, response.status());
         assert!(response.body().is_empty());
     }
@@ -157,7 +157,7 @@ mod tests {
             .method("GET")
             .body(Vec::new())
             .unwrap();
-        let response = protocol.handle_request(&request);
+        let response = protocol.handle_request(request);
         assert_eq!(200, response.status());
         assert_eq!(
             "text/plain",
@@ -187,7 +187,7 @@ mod tests {
             .method("GET")
             .body(Vec::new())
             .unwrap();
-        let response = protocol.handle_request(&request);
+        let response = protocol.handle_request(request);
         assert_eq!(200, response.status());
         assert_eq!(
             "application/json",
@@ -216,7 +216,7 @@ mod tests {
             .method("GET")
             .body(Vec::new())
             .unwrap();
-        let response = protocol.handle_request(&request);
+        let response = protocol.handle_request(request);
         assert_eq!(200, response.status());
         assert_eq!(
             "application/octet-stream",
