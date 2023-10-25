@@ -266,7 +266,7 @@ impl Ui {
                 rfd::MessageDialog::new()
                     .set_level(rfd::MessageLevel::Error)
                     .set_title("Fatal error")
-                    .set_description(&format!("{APP_TITLE} had a fatal error:\n{err}"))
+                    .set_description(format!("{APP_TITLE} had a fatal error:\n{err}"))
                     .show();
                 *control_flow = ControlFlow::ExitWithCode(1);
             }
@@ -350,7 +350,7 @@ impl Ui {
                     rfd::MessageDialog::new()
                         .set_level(level)
                         .set_title(title)
-                        .set_description(&message)
+                        .set_description(&*message)
                         .show();
                 }
                 FrontendMessage::Log { level, message } => {
@@ -433,7 +433,7 @@ fn create_webview(
         .with_custom_protocol("internal".into(), {
             move |request| {
                 let internal_protocol = internal_protocol.clone();
-                Ok(internal_protocol.handle_request(request))
+                internal_protocol.handle_request(request)
             }
         })
         .with_ipc_handler({
