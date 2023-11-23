@@ -40,13 +40,17 @@ A number of development libraries are required to compile on Linux:
 - GCC
 - The ALSA library
 - GTK 3
-- WebKit 2 for GTK
-- XDO
+- WebKit2GTK 4.1
 
 On Debian or Ubuntu systems, these can be installed with:
 
 ```bash
-sudo apt-get install build-essential libasound2-dev libgtk-3-dev libwebkit2gtk-4.1-dev libxdo-dev
+sudo apt-get install build-essential libasound2-dev libgtk-3-dev libwebkit2gtk-4.1-dev
+```
+
+On Fedora, these can be installed with:
+```bash
+sudo dnf install gcc gtk3-devel webkit2gtk4.1-devel alsa-lib-devel
 ```
 
 Know how to install these on other distributions? Please open a pull request to update this README!
