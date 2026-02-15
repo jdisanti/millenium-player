@@ -86,12 +86,6 @@ This will start up the player playing test-data/hydrate/hydrate.mp3.
 
 Have a look at the [`justfile`](./justfile) for more build targets.
 
-Discussion
-----------
-
-There is a [Discord server](https://discord.gg/Ga3nV7KHcK) for discussing Millenium Player.
-Ask questions, report issues, and talk about development and contributions there.
-
 Contributing
 ------------
 
